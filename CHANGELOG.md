@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0 - 2026-09-28
+
 - **Start a site:** `nibble new` checks this computer, fetches Nibble's latest release, verifies it against its
   published checksum, and installs it.
 - **Run a site's tasks:** inside a site, `nibble check` runs `bin/rails nibble:check`, and so on for every task.
