@@ -17,8 +17,8 @@ pub fn server_name(origin: &str) -> String {
     format!("nibble-{}", slug.trim_matches('-'))
 }
 
-pub fn install_mcp(client: &str, origin: &str, api_origin: &str, name: Option<String>) -> Result<String> {
-    let url = format!("{api_origin}/mcp");
+pub fn install_mcp(client: &str, origin: &str, api: &str, name: Option<String>) -> Result<String> {
+    let url = format!("{api}/mcp");
     let name = name.unwrap_or_else(|| server_name(origin));
     match client {
         "claude-code" => {

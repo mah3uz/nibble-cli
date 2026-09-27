@@ -41,7 +41,7 @@ fn text(value: &Value, key: &str) -> Option<String> {
 }
 
 pub fn discover(origin: &str) -> Result<Server> {
-    let resource = get_json(&format!("{origin}/.well-known/oauth-protected-resource/api/v2"))?;
+    let resource = get_json(&format!("{origin}/.well-known/oauth-protected-resource/api/v1"))?;
     let api = text(&resource, "resource").context("the site didn't name its API")?;
     let issuer = resource["authorization_servers"][0].as_str().context("the site didn't name who signs you in")?.to_string();
     if !http::same_origin(&api, origin) || !http::same_origin(&issuer, origin) {

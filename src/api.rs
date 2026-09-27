@@ -66,7 +66,7 @@ impl Session {
     }
 
     pub fn call(&mut self, operation: &str, input: &Value) -> Result<Value> {
-        let url = format!("{}/{}", self.site.api, operation);
+        let url = format!("{}/operations/{}", self.site.api, operation);
         self.send(|client, token| client.post(&url).bearer_auth(token).json(input))
     }
 

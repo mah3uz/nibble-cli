@@ -18,7 +18,7 @@ token="$(bin/rails runner '
     password: Nibble::User.generate_password, roles: [ Nibble::Role.find_by!(handle: "admin") ])
   grant = Nibble::Grant.create!(user:, kind: "ci", name: "Contract", preset: "draft", abilities: Nibble::AgentAccess.preset("draft"),
     via: "token", expires_at: 1.hour.from_now)
-  print Nibble::OauthToken.issue(grant, "ci", resource: "#{ENV["SITE_URL"]}/api/v2", expires_at: grant.expires_at)
+  print Nibble::OauthToken.issue(grant, "ci", resource: "#{ENV["SITE_URL"]}/api/v1", expires_at: grant.expires_at)
 ' | tail -1)"
 
 bin/rails server -p "$port" -P tmp/pids/contract.pid >log/contract-server.log 2>&1 &

@@ -211,7 +211,7 @@ mod tests {
             let site = Site {
                 name: "Site".into(),
                 issuer: origin.into(),
-                api: format!("{origin}/api/v2"),
+                api: format!("{origin}/api/v1"),
                 token_endpoint: String::new(),
                 revocation_endpoint: None,
                 accounts: BTreeMap::new(),
