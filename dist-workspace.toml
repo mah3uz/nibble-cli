@@ -1,0 +1,16 @@
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.32.0"
+ci = "github"
+installers = ["shell", "powershell"]
+# musl so one Linux build runs on any distribution; macOS isn't built yet.
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
+install-path = "~/.local/bin"
+hosting = "github"
+install-updater = false
+
+# aws-lc-sys compiles C, which is simpler on a native ARM machine than cross-compiled.
+[dist.github-custom-runners]
+aarch64-unknown-linux-musl = "ubuntu-24.04-arm"

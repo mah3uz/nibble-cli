@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Usage: script/release <version>. Pushing the tag starts .github/workflows/release.yml, which builds and publishes it.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+refuse() { echo "release refused: $*" >&2; exit 1; }
+
+version="${1:-}"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || refuse "usage: script/release <version>, e.g. script/release 0.2.0"
+[[ -z "$(git status --porcelain)" ]] || refuse "the working tree isn't clean"
+[[ "$(git branch --show-current)" == main ]] || refuse "releases are cut from main"
+! git rev-parse -q --verify "refs/tags/v$version" >/dev/null || refuse "v$version is already tagged"
+
+current="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+newest="$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -1)"
+if [[ -n "$(git tag -l "v$current")" ]]; then
+  [[ "$version" != "$current" && "$newest" == "$version" ]] || refuse "$version isn't newer than $current"
+else
+  [[ "$newest" == "$version" ]] || refuse "$version is behind $current, which has no tag yet"
+fi
+
+notes="$(awk '/^## Unreleased/ { found = 1; next } /^## [0-9]/ { found = 0 } found' CHANGELOG.md | sed '/./,$!d')"
+[[ -n "${notes//[[:space:]]/}" ]] || refuse "CHANGELOG.md has nothing under Unreleased"
+
+# The tree was clean to begin with, so whatever this writes before giving up has to go back.
+trap 'git checkout -q -- Cargo.toml Cargo.lock CHANGELOG.md' EXIT
+perl -0pi -e "s/^version = \"[^\"]+\"/version = \"$version\"/m" Cargo.toml
+perl -0pi -e "s/^## Unreleased\n/## Unreleased\n\n## $version - $(date +%Y-%m-%d)\n/m" CHANGELOG.md
+cargo metadata --format-version 1 >/dev/null
+
+echo "running script/ci"
+script/ci || refuse "script/ci failed — nothing was committed or tagged"
+
+git add Cargo.toml Cargo.lock CHANGELOG.md
+git commit -qm "Release $version"
+trap - EXIT
+git tag -a "v$version" --cleanup=verbatim -m "nibble $version" -m "$notes"
+echo "tagged v$version"
+
+read -r -p "push main and v$version to origin? GitHub then builds and publishes it [y/N] " answer
+if [[ "$answer" =~ ^[Yy]$ ]]; then
+  git push origin main --follow-tags
+  echo "building: https://github.com/mah3uz/nibble-cli/actions"
+else
+  echo "not pushed. When ready: git push origin main --follow-tags"
+fi

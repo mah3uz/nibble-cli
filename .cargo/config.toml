@@ -1,0 +1,3 @@
+# musl-tools provides musl-gcc, but for ARM musl cc looks only for aarch64-linux-musl-gcc, which nothing installs.
+[env]
+CC_aarch64_unknown_linux_musl = "musl-gcc"

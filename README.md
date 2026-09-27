@@ -1,7 +1,26 @@
+<p align="center"><img src="banner.png" alt="nibble — start a site, run its tasks, and work on its content, from your terminal or your agent" width="100%"></p>
+
 # nibble
 
 The command-line tool for [Nibble](https://nibble.ink). It starts a site, runs a site's tasks, and works on the
 content of any Nibble site you sign in to, as you and never as more than you.
+
+## Install
+
+For Linux on Intel or ARM:
+
+```sh
+curl -LsSf https://github.com/mah3uz/nibble-cli/releases/latest/download/nibble-cli-installer.sh | sh
+```
+
+For Windows, in PowerShell:
+
+```powershell
+irm https://github.com/mah3uz/nibble-cli/releases/latest/download/nibble-cli-installer.ps1 | iex
+```
+
+Either puts `nibble` in `~/.local/bin`. Each release also has a `sha256.sum` for checking a download by hand. From a
+clone, `just install` builds it and does the same, and tells you if `~/.local/bin` isn't on your `PATH` yet.
 
 ## Start a site
 
@@ -55,12 +74,43 @@ prints one value.
 
 ## Developing
 
+The CLI is built with Rust and [just](https://github.com/casey/just):
+
 ```sh
-script/ci                  # formatting, clippy, unit tests, then the contract test
-cargo test                 # unit tests
-script/contract            # the CLI against a Nibble checkout (../ by default) on a test database
+just test                  # formatting, clippy, unit tests, then the contract test against ../ (or: just test <path>)
+just build                 # an optimised build at target/release/nibble
+just install               # build it and put it in ~/.local/bin
 ```
+
+The contract test starts a Nibble checkout on a test database, gives the CLI a token, and works on content through
+the management API, so the CLI and Nibble can't drift apart unnoticed. Keep this repository in a Nibble checkout's
+`cli/` folder: `just test` finds Nibble at `..`, and Nibble's own release script runs `script/ci` from there before it
+tags a release.
 
 `nibble remote` reads each site's operations at run time, so a new operation needs no new CLI. What the CLI relies on
 is the management API's contract number, `Nibble::MANAGEMENT_API_VERSION`; `API_VERSION` in `src/api.rs` must match
 it, and every answer is checked against it.
+
+## Releasing
+
+```sh
+just release 0.2.0
+```
+
+It refuses a malformed or backwards version, a tag that exists, a dirty tree, a branch other than `main`, and an
+empty `Unreleased` section in `CHANGELOG.md`. Then it sets the version in `Cargo.toml`, dates the changelog section,
+runs `script/ci`, and only then commits and tags. If the checks fail, nothing is committed or tagged.
+
+It then offers to push. The pushed tag starts [dist](https://github.com/axodotdev/cargo-dist)'s workflow in
+`.github/workflows/release.yml`, which builds these and publishes them with the installers and checksums as a GitHub
+release, its notes taken from the changelog:
+
+| Target | Built on |
+|---|---|
+| `x86_64-unknown-linux-musl` | `ubuntu-22.04` |
+| `aarch64-unknown-linux-musl` | `ubuntu-24.04-arm` |
+| `x86_64-pc-windows-msvc` | `windows-2022` |
+
+Linux builds are static, so one runs on any distribution. macOS isn't built yet. The settings are in
+`dist-workspace.toml`; after changing them, run `dist generate` to rewrite the workflow, and `dist plan` to see what a
+release would build.
