@@ -5,6 +5,7 @@
 ## 0.1.1 - 2026-09-28
 
 - **Builds for macOS,** on Apple Silicon and Intel, installed by the same script as on Linux.
+- **Builds come as `.tar.gz`,** which minimal servers and containers can unpack without installing `xz`.
 - **`nibble new` says how to get what's missing:** mise for Ruby and Node, which distributions package too old for
   Nibble, and this system's own packages for the rest — Homebrew, apt, or pacman on Arch Linux and its derivatives.
 - **`nibble new` checks Ruby and Node against what the release needs** before installing anything, and says which

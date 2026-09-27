@@ -8,6 +8,8 @@ installers = ["shell", "powershell"]
 # musl so one Linux build runs on any distribution.
 targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]
 install-path = "~/.local/bin"
+# gzip, not dist's default xz: minimal servers and containers can unpack it without installing anything.
+unix-archive = ".tar.gz"
 hosting = "github"
 install-updater = false
 
