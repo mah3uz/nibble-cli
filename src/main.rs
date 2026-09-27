@@ -161,9 +161,9 @@ fn run(cli: Cli, output: Output) -> Result<i32> {
             let session = session(cli.site)?;
             match command {
                 McpCommand::Install { client, name } => {
-                    println!("{}", agents::install_mcp(&client, &session.origin, &session.site.api, name)?)
+                    println!("{}", agents::install_mcp(&client, &session.origin, &session.site.issuer, name)?)
                 }
-                McpCommand::Url => println!("{}/mcp", session.site.api),
+                McpCommand::Url => println!("{}/mcp", session.site.issuer),
             }
             Ok(0)
         }
