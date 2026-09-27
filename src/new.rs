@@ -1,3 +1,4 @@
+use crate::style::{DIM, GOOD, NAME, STRONG, paint};
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -53,7 +54,7 @@ fn ask_name() -> Result<String> {
     if !std::io::stdin().is_terminal() {
         return Ok("nibble".into());
     }
-    eprint!("  Name your site; its folder is named after it (nibble): ");
+    anstream::eprint!("  {} {} ", paint(STRONG, "Name your site;"), paint(DIM, "its folder is named after it (nibble):"));
     std::io::stderr().flush()?;
     let mut line = String::new();
     std::io::stdin().read_line(&mut line)?;
@@ -110,7 +111,7 @@ fn fetch_and_unpack(work: &Path, dir: &Path, version: Option<String>) -> Result<
             Some(version) => version,
             None => latest(&repository)?,
         };
-        eprintln!("  Fetching Nibble {version}");
+        anstream::eprintln!("  {} Nibble {}", paint(NAME, "Fetching"), paint(STRONG, &version));
         let base = format!("https://github.com/{repository}/releases/download/v{version}");
         let client = downloader();
         let file = format!("nibble-{version}.tar.gz");
@@ -132,7 +133,7 @@ fn fetch_and_unpack(work: &Path, dir: &Path, version: Option<String>) -> Result<
         .context("the archive doesn't hold a nibble- folder")?;
     fs::create_dir_all(dir.join("vendor"))?;
     fs::rename(&source, dir.join("vendor/nibble")).or_else(|_| copy_dir(&source, &dir.join("vendor/nibble")))?;
-    eprintln!("  Unpacked Nibble into {}", dir.display());
+    anstream::eprintln!("  {} Unpacked Nibble into {}", paint(GOOD, "✓"), paint(STRONG, dir.display()));
     Ok(())
 }
 

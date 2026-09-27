@@ -45,8 +45,9 @@ fn the_cli_and_the_site_agree_on_the_management_api() {
         nibble(&["remote", "create_entry", "--collection", &collection, "--data", r#"{"title":"Contract check"}"#, "--dry-run"]);
     assert_eq!(rehearsal["data"]["saved"], false, "{rehearsal}");
 
-    let created = nibble(&["remote", "create_entry", "--collection", &collection, "--data", r#"{"title":"Contract draft"}"#]);
-    let id = created["data"]["id"].as_i64().expect("the draft was created").to_string();
+    let created =
+        nibble(&["remote", "create_entry", "--collection", &collection, "--data", r#"{"title":"Contract draft"}"#, "--pick", "id"]);
+    let id = created.as_i64().expect("--pick gives a script the bare value, not the envelope").to_string();
     let refused = nibble(&["remote", "transition_entry", "--id", &id, "--action", "publish"]);
     assert_eq!(refused["error"]["code"], "forbidden", "a Draft token never publishes: {refused}");
     assert_eq!(refused["ok"], false);

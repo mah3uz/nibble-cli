@@ -8,16 +8,18 @@ mod output;
 mod project;
 mod remote;
 mod store;
+mod style;
 
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
 use config::{Account, Config, Profile, Site, Storage};
 use output::Output;
 use serde_json::{Value, json};
+use style::{BAD, CHANGE, DIM, GOOD, HEADING, NAME, STRONG, paint};
 
 /// Nibble: start a site, run its tasks, and work on the content of the sites you're signed in to.
 #[derive(Parser)]
-#[command(name = "nibble", version, allow_external_subcommands = true, disable_help_subcommand = true)]
+#[command(name = "nibble", version, allow_external_subcommands = true, disable_help_subcommand = true, styles = style::HELP)]
 struct Cli {
     /// Print JSON (the default when the output isn't a terminal)
     #[arg(long, global = true)]
@@ -144,7 +146,11 @@ fn run(cli: Cli, output: Output) -> Result<i32> {
         let cwd = std::env::current_dir()?;
         Cli::command().print_help()?;
         if let Some(root) = project::root(&cwd) {
-            println!("\nIn a site ({}), anything else runs its tasks: `nibble check`, `nibble upgrade`, …", root.display());
+            anstream::println!(
+                "\n{} {}: anything else runs its tasks, like `nibble check` or `nibble upgrade`.",
+                paint(HEADING, "In a site"),
+                paint(STRONG, root.display())
+            );
         }
         return Ok(0);
     };
@@ -233,7 +239,7 @@ fn auth_command(command: AuthCommand, site: Option<String>, output: Output) -> R
             let mut config = Config::load()?;
             config.remove(&profile);
             config.save()?;
-            eprintln!("Signed out of {}, and the site has disconnected the CLI.", profile.label());
+            style::done(format!("Signed out of {}, and the site has disconnected the CLI.", paint(STRONG, profile.label())));
             Ok(())
         }
         AuthCommand::List => {
@@ -249,18 +255,22 @@ fn auth_command(command: AuthCommand, site: Option<String>, output: Output) -> R
             if output.json {
                 output.success(&json!(rows), None, None);
             } else if rows.is_empty() {
-                println!("Not signed in anywhere. `nibble auth login <site>` signs you in.");
+                anstream::println!("Not signed in anywhere. {}", paint(DIM, "`nibble auth login <site>` signs you in."));
             } else {
                 for row in rows {
-                    let marker = if row["default"] == json!(true) { "*" } else { " " };
-                    println!(
-                        "{marker} {}:{}  ({}, {})",
-                        row["site"].as_str().unwrap(),
-                        row["account"].as_str().unwrap(),
-                        row["name"].as_str().unwrap(),
-                        row["access"].as_str().unwrap()
+                    let marker = if row["default"] == json!(true) { paint(GOOD, "●") } else { " ".into() };
+                    anstream::println!(
+                        "{marker} {}{}  {}",
+                        paint(STRONG, row["site"].as_str().unwrap()),
+                        paint(NAME, format!(":{}", row["account"].as_str().unwrap())),
+                        paint(DIM, format!("{}, {} access", row["name"].as_str().unwrap(), row["access"].as_str().unwrap()))
                     );
                 }
+                anstream::println!(
+                    "\n{} {}",
+                    paint(GOOD, "●"),
+                    paint(DIM, "is used when you don't name a site. `nibble auth switch` changes it.")
+                );
             }
             Ok(())
         }
@@ -269,7 +279,7 @@ fn auth_command(command: AuthCommand, site: Option<String>, output: Output) -> R
             let found = config.find(&profile)?;
             config.default = Some(found.key());
             config.save()?;
-            eprintln!("Commands now use {}.", found.label());
+            style::done(format!("Commands now use {}.", paint(STRONG, found.label())));
             Ok(())
         }
         AuthCommand::Status => {
@@ -285,7 +295,7 @@ fn auth_command(command: AuthCommand, site: Option<String>, output: Output) -> R
             let profile = config.find(&reference)?;
             config.allowed_folders.insert(folder.to_string_lossy().to_string(), profile.key());
             config.save()?;
-            eprintln!("Commands in {} now use {}.", folder.display(), profile.label());
+            style::done(format!("Commands in {} now use {}.", paint(STRONG, folder.display()), paint(STRONG, profile.label())));
             Ok(())
         }
     }
@@ -329,7 +339,12 @@ fn login(url: &str, device: bool, open_browser: bool, insecure_storage: bool, ou
     if output.json {
         output.success(&json!({ "site": origin, "account": email, "access": account.access }), Some(&origin), None);
     } else {
-        eprintln!("Signed in to {} as {email} ({} access).", config::host(&origin), account.access);
+        style::done(format!(
+            "Signed in to {} as {} {}",
+            paint(STRONG, config::host(&origin)),
+            paint(STRONG, &email),
+            paint(DIM, format!("({} access)", account.access))
+        ));
     }
     Ok(())
 }
@@ -340,22 +355,26 @@ fn skill_command(command: SkillCommand, site: Option<String>) -> Result<()> {
             let dir = agents::skills_dir(client.as_deref(), dir)?;
             let mut session = session(site)?;
             let (folder, changed) = agents::install_skill(&mut session, &dir)?;
-            eprintln!("{} {}", if changed { "Wrote" } else { "Already current:" }, folder.join("SKILL.md").display());
+            style::done(format!(
+                "{} {}",
+                if changed { "Wrote" } else { "Already current:" },
+                paint(STRONG, folder.join("SKILL.md").display())
+            ));
         }
         SkillCommand::Sync => {
             let config = Config::load()?;
             let installed = agents::installed_skills();
             if installed.is_empty() {
-                eprintln!("No site skills installed. `nibble skill install --client claude` adds one.");
+                anstream::eprintln!("No site skills installed. {}", paint(DIM, "`nibble skill install --client claude` adds one."));
             }
             for (folder, origin) in installed {
                 let Some(profile) = config.profiles().into_iter().find(|profile| profile.origin == origin) else {
-                    eprintln!("Skipped {}: not signed in to {origin}", folder.display());
+                    anstream::eprintln!("{} Skipped {}: not signed in to {origin}", paint(CHANGE, "!"), paint(STRONG, folder.display()));
                     continue;
                 };
                 let mut session = api::Session::for_profile(profile)?;
                 let (_, changed) = agents::install_skill(&mut session, folder.parent().unwrap())?;
-                eprintln!("{} {}", if changed { "Updated" } else { "Current:" }, folder.display());
+                style::done(format!("{} {}", if changed { "Updated" } else { "Current:" }, paint(STRONG, folder.display())));
             }
         }
     }
@@ -407,8 +426,14 @@ fn doctor(site: Option<String>, output: Output) -> Result<i32> {
         let rows: Vec<Value> = checks.iter().map(|(name, ok, detail)| json!({ "check": name, "ok": ok, "detail": detail })).collect();
         println!("{}", json!({ "ok": healthy, "data": rows }));
     } else {
+        let width = checks.iter().map(|(name, _, _)| name.chars().count()).max().unwrap_or(0);
         for (name, ok, detail) in &checks {
-            println!("{} {name}: {detail}", if *ok { "✓" } else { "✗" });
+            let mark = if *ok { paint(GOOD, "✓") } else { paint(BAD, "✗") };
+            anstream::println!(
+                "{mark} {}  {}",
+                paint(STRONG, format!("{name:<width$}")),
+                if *ok { paint(DIM, detail) } else { detail.clone() }
+            );
         }
     }
     Ok(if healthy { 0 } else { 1 })

@@ -1,5 +1,6 @@
 use crate::http::{self, Problem};
 use crate::store::{Tokens, now};
+use crate::style::{CHANGE, DIM, HEADING, LINK, paint};
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -96,9 +97,9 @@ pub fn browser_login(server: &Server, open_browser: bool) -> Result<Tokens> {
         .append_pair("state", &state)
         .append_pair("resource", &server.api);
 
-    eprintln!("Sign in and choose what the CLI may do:\n  {url}");
+    anstream::eprintln!("{}\n  {}", paint(HEADING, "Sign in and choose what the CLI may do:"), paint(LINK, &url));
     if open_browser && webbrowser::open(url.as_str()).is_err() {
-        eprintln!("Couldn't open a browser; open the address above yourself.");
+        anstream::eprintln!("{}", paint(DIM, "Couldn't open a browser; open the address above yourself."));
     }
 
     let params = wait_for_callback(listener)?;
@@ -170,7 +171,14 @@ pub fn device_login(server: &Server) -> Result<Tokens> {
     if !http::same_origin(&verification, &server.issuer) {
         bail!("the site sent a sign-in address on another site ({verification}); stopping");
     }
-    eprintln!("On any device, open {verification}\nand enter the code {user_code}\nOnly do this if you started it yourself.");
+    anstream::eprintln!(
+        "{} {}\n{} {}\n{}",
+        paint(HEADING, "On any device, open"),
+        paint(LINK, &verification),
+        paint(HEADING, "and enter the code"),
+        paint(CHANGE, &user_code),
+        paint(DIM, "Only do this if you started it yourself.")
+    );
 
     let mut interval = body["interval"].as_u64().unwrap_or(5).max(1);
     let deadline = now() + body["expires_in"].as_i64().unwrap_or(600);

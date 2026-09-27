@@ -68,9 +68,10 @@ The site must have Agent access turned on by an administrator.
 
 ## Output
 
-On a terminal, lists print as tables. Otherwise, or with `--json`, every command prints
-`{"ok": true, "data": …, "site": …}` or `{"ok": false, "error": {"code", "message", "hint"}}`. `--pick entries.0.title`
-prints one value.
+On a terminal, lists print as tables and records as aligned fields, with colour for headings, operations and anything
+that changes content. `NO_COLOR=1` turns colour off, and it is never sent to a pipe or a file. Otherwise, or with
+`--json`, every command prints `{"ok": true, "data": …, "site": …}` or `{"ok": false, "error": {"code", "message",
+"hint"}}`. `--pick entries.0.title` prints just that value, for a script to capture.
 
 ## Developing
 

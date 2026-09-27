@@ -1,5 +1,6 @@
 use crate::api::Session;
 use crate::output::Output;
+use crate::style::{CHANGE, DIM, HEADING, NAME, STRONG, paint};
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value, json};
 use std::io::Read;
@@ -49,33 +50,50 @@ pub fn list(session: &mut Session, output: Output) -> Result<()> {
         output.success(&catalogue["data"], Some(&session.origin), None);
         return Ok(());
     }
-    println!("On {} ({}), this connection can run:\n", session.site.name, session.label);
+    anstream::println!("{} {}\n", paint(HEADING, "Operations on"), paint(STRONG, format!("{} ({})", session.site.name, session.label)));
     for operation in operations(&catalogue) {
         let name = operation["name"].as_str().unwrap_or_default();
-        let marker = if operation["annotations"]["readOnlyHint"] == json!(true) { " " } else { "*" };
-        println!("  {marker} {name:<22} {}", operation["title"].as_str().unwrap_or_default());
+        let marker = if operation["annotations"]["readOnlyHint"] == json!(true) { " ".into() } else { paint(CHANGE, "*") };
+        anstream::println!("  {marker} {} {}", paint(NAME, format!("{name:<22}")), operation["title"].as_str().unwrap_or_default());
     }
-    println!("\n* changes content. `nibble remote <operation> --help` shows its arguments.");
+    anstream::println!(
+        "\n{} {}",
+        paint(CHANGE, "*"),
+        paint(DIM, "changes content. `nibble remote <operation> --help` shows its arguments.")
+    );
     Ok(())
 }
 
 pub fn describe(operation: &Value) {
-    println!("{}\n\n{}\n", operation["title"].as_str().unwrap_or_default(), operation["description"].as_str().unwrap_or_default());
+    anstream::println!(
+        "{}\n\n{}\n",
+        paint(HEADING, operation["title"].as_str().unwrap_or_default()),
+        operation["description"].as_str().unwrap_or_default()
+    );
     let required: Vec<&str> =
         operation["input"]["required"].as_array().map(|list| list.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     if let Some(properties) = operation["input"]["properties"].as_object() {
-        println!("Arguments:");
-        for (name, schema) in properties {
-            let kind = match &schema["type"] {
+        anstream::println!("{}", paint(HEADING, "Arguments"));
+        let kinds: Vec<String> = properties
+            .values()
+            .map(|schema| match &schema["type"] {
                 Value::Array(types) => types.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("|"),
                 other => other.as_str().unwrap_or("any").to_string(),
-            };
+            })
+            .collect();
+        let width = kinds.iter().map(String::len).max().unwrap_or(0);
+        for ((name, schema), kind) in properties.iter().zip(&kinds) {
             let flag = if name == "dry_run" { "--dry-run".to_string() } else { format!("--{}", name.replace('_', "-")) };
-            let needed = if required.contains(&name.as_str()) { " (required)" } else { "" };
-            println!("  {flag:<20} {kind}{needed}  {}", schema["description"].as_str().unwrap_or_default());
+            let needed = if required.contains(&name.as_str()) { paint(CHANGE, "required") } else { " ".repeat(8) };
+            anstream::println!(
+                "  {} {} {needed}  {}",
+                paint(NAME, format!("{flag:<20}")),
+                paint(DIM, format!("{kind:<width$}")),
+                schema["description"].as_str().unwrap_or_default()
+            );
         }
     }
-    println!("\nObjects and arrays take JSON, @file.json, or - for standard input.");
+    anstream::println!("\n{}", paint(DIM, "Objects and arrays take JSON, @file.json, or - for standard input."));
 }
 
 pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: Option<&str>) -> Result<()> {
@@ -94,7 +112,7 @@ pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: 
     let input = build_input(&operation, &invocation.input)?;
     let changes = operation["annotations"]["readOnlyHint"] != json!(true);
     if changes && !output.json {
-        eprintln!("→ {} on {}", name, session.label);
+        anstream::eprintln!("{} {} on {}", paint(CHANGE, "→"), paint(NAME, &name), paint(STRONG, &session.label));
     }
     let response = session.call(&name, &Value::Object(input))?;
     output.success(&response["data"], Some(&session.origin), pick);
