@@ -56,6 +56,11 @@ prints one value.
 ## Developing
 
 ```sh
+script/ci                  # formatting, clippy, unit tests, then the contract test
 cargo test                 # unit tests
 script/contract            # the CLI against a Nibble checkout (../ by default) on a test database
 ```
+
+`nibble remote` reads each site's operations at run time, so a new operation needs no new CLI. What the CLI relies on
+is the management API's contract number, `Nibble::MANAGEMENT_API_VERSION`; `API_VERSION` in `src/api.rs` must match
+it, and every answer is checked against it.

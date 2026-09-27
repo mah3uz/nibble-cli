@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Everything that must pass before a commit: formatting, lints, unit tests, and the contract with a Nibble checkout.
+# Usage: script/ci [path to a Nibble checkout, default ..]
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+script/contract "$@"

@@ -5,6 +5,9 @@ use crate::store::{self, Tokens};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
+pub const API_VERSION: u32 = 1;
+const RELEASES: &str = "https://github.com/mah3uz/nibble-cli/releases";
+
 pub struct Session {
     pub site: Site,
     pub origin: String,
@@ -86,6 +89,10 @@ impl Session {
             response = build(&client, &self.tokens.access_token).send()?;
         }
         let status = response.status().as_u16();
+        let version = response.headers().get("nibble-api-version").and_then(|value| value.to_str().ok());
+        if version.is_some() || (200..300).contains(&status) {
+            check_version(&self.origin, version)?;
+        }
         if status == 404 && response.headers().get("content-type").is_none_or(|kind| !kind.to_str().unwrap_or("").contains("json")) {
             bail!("{} answered 404: its administrator may have turned Agent access off", self.origin);
         }
@@ -94,5 +101,44 @@ impl Session {
             return Err(Problem::from_body(status, &body).into());
         }
         Ok(body)
+    }
+}
+
+// Only the side that is behind can fix a mismatch, so the message names it.
+fn check_version(origin: &str, header: Option<&str>) -> Result<()> {
+    match header.and_then(|value| value.trim().parse::<u32>().ok()) {
+        Some(API_VERSION) => Ok(()),
+        Some(site) if site > API_VERSION => bail!(
+            "{origin} speaks version {site} of Nibble's management API, and this nibble only version {API_VERSION}; \
+             install the latest nibble from {RELEASES}"
+        ),
+        _ => bail!(
+            "{origin} runs a Nibble older than this nibble supports (it needs management API version {API_VERSION}); \
+             ask the site's administrator to run `bin/rails nibble:upgrade`, or use an older nibble"
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_site_on_the_same_contract_is_used() {
+        assert!(check_version("https://example.com", Some(&API_VERSION.to_string())).is_ok());
+    }
+
+    #[test]
+    fn a_newer_site_asks_for_a_newer_cli() {
+        let error = check_version("https://example.com", Some(&(API_VERSION + 1).to_string())).unwrap_err().to_string();
+        assert!(error.contains("install the latest nibble"), "{error}");
+    }
+
+    #[test]
+    fn an_older_or_unversioned_site_asks_for_a_site_upgrade() {
+        for header in [Some("0"), Some("2026-09-27"), None] {
+            let error = check_version("https://example.com", header).unwrap_err().to_string();
+            assert!(error.contains("nibble:upgrade"), "{header:?}: {error}");
+        }
     }
 }
