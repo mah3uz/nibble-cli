@@ -52,12 +52,63 @@ fn latest(repository: &str) -> Result<String> {
 
 pub const NIBBLE_REPOSITORY: &str = "mah3uz/nibble";
 
-fn install_hint() -> Option<&'static str> {
-    match std::env::consts::OS {
-        "macos" => Some("Most of these: brew install ruby node sqlite vips ffmpeg"),
-        "linux" => Some("Debian/Ubuntu: sudo apt install ruby-full nodejs npm sqlite3 libvips-tools ffmpeg"),
-        _ => None,
+const MISE: &str = "Ruby and Node: install mise (https://mise.jdx.dev), then run: mise use --global ruby@latest node@lts";
+const BREW: &str = "The rest, on macOS: brew install sqlite vips ffmpeg";
+const DEBIAN: &str = "The rest, on Debian or Ubuntu: sudo apt install sqlite3 libvips-tools ffmpeg";
+const ARCH: &str = "The rest, on Arch Linux: sudo pacman -S --needed sqlite libvips ffmpeg";
+
+// Distributions package a Ruby and Node older than Nibble needs, so those come from mise and the rest from the system.
+fn install_hints(missing: &[&str], os: &str, os_release: &str) -> Vec<&'static str> {
+    let mut hints = Vec::new();
+    if missing.iter().any(|program| ["ruby", "bundle", "node", "npm"].contains(program)) {
+        hints.push(MISE);
     }
+    if !missing.iter().any(|program| ["sqlite3", "vips", "ffmpeg"].contains(program)) {
+        return hints;
+    }
+    let family: Vec<&str> = os_release
+        .lines()
+        .filter_map(|line| line.strip_prefix("ID=").or_else(|| line.strip_prefix("ID_LIKE=")))
+        .flat_map(|value| value.trim_matches('"').split_whitespace())
+        .collect();
+    let like = |names: &[&str]| family.iter().any(|id| names.contains(id));
+    match os {
+        "macos" => hints.push(BREW),
+        "linux" => match (like(&["debian", "ubuntu"]), like(&["arch", "manjaro", "endeavouros"])) {
+            (true, false) => hints.push(DEBIAN),
+            (false, true) => hints.push(ARCH),
+            _ => hints.extend([DEBIAN, ARCH]),
+        },
+        _ => {}
+    }
+    hints
+}
+
+fn parse_version(text: &str) -> Vec<u64> {
+    text.trim().trim_start_matches(['v', 'V']).split('.').map_while(|part| part.parse().ok()).collect()
+}
+
+// A release names the Ruby and Node it needs; checking them here beats a failure deep inside bundle or npm install.
+fn too_old(declared: &str, ruby: Option<&str>, node: Option<&str>) -> Vec<String> {
+    let needs = |key: &str| declared.lines().find_map(|line| line.strip_prefix(&format!("{key}: ")).map(|value| value.trim().to_string()));
+    let mut problems = Vec::new();
+    for (key, label, found, tool) in [("ruby", "Ruby", ruby, "ruby"), ("node", "Node", node, "node")] {
+        let (Some(needed), Some(found)) = (needs(key), found) else { continue };
+        if parse_version(found) < parse_version(&needed) {
+            let major = needed.split('.').next().unwrap_or(&needed);
+            problems.push(format!(
+                "{label} {needed} or newer is needed, and this computer has {}. With mise (https://mise.jdx.dev): mise use --global {tool}@{}",
+                found.trim().trim_start_matches('v'),
+                if key == "node" { major.to_string() } else { needed.clone() }
+            ));
+        }
+    }
+    problems
+}
+
+fn installed_version(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn folder_for(name: &str) -> String {
@@ -88,11 +139,13 @@ fn ask_name() -> Result<String> {
 }
 
 pub fn run(name: Option<String>, version: Option<String>, install_args: &[String]) -> Result<i32> {
-    let missing: Vec<String> =
-        NEEDS.iter().filter(|(program, _)| !on_path(program)).map(|(program, why)| format!("{program} — {why}")).collect();
+    let missing: Vec<(&str, &str)> = NEEDS.iter().copied().filter(|(program, _)| !on_path(program)).collect();
     if !missing.is_empty() {
-        let hint = install_hint().map(|hint| format!("\n  {hint}")).unwrap_or_default();
-        bail!("this computer is missing:\n    {}{hint}", missing.join("\n    "));
+        let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
+        let programs: Vec<&str> = missing.iter().map(|(program, _)| *program).collect();
+        let hint: String = install_hints(&programs, std::env::consts::OS, &os_release).iter().map(|hint| format!("\n  {hint}")).collect();
+        let listed: Vec<String> = missing.iter().map(|(program, why)| format!("{program} — {why}")).collect();
+        bail!("this computer is missing:\n    {}{hint}", listed.join("\n    "));
     }
     anstream::eprintln!("  {} Everything needed is here", paint(GOOD, "✓"));
 
@@ -158,6 +211,13 @@ fn fetch_and_unpack(work: &Path, dir: &Path, version: Option<String>) -> Result<
         .map(|entry| entry.path())
         .find(|path| path.is_dir() && path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("nibble-")))
         .context("the archive doesn't hold a nibble- folder")?;
+    let declared = fs::read_to_string(source.join("VERSION")).unwrap_or_default();
+    let ruby = installed_version("ruby", &["-e", "print RUBY_VERSION"]);
+    let node = installed_version("node", &["--version"]);
+    let problems = too_old(&declared, ruby.as_deref(), node.as_deref());
+    if !problems.is_empty() {
+        bail!("nothing was installed:\n    {}", problems.join("\n    "));
+    }
     fs::create_dir_all(dir.join("vendor"))?;
     fs::rename(&source, dir.join("vendor/nibble")).or_else(|_| copy_dir(&source, &dir.join("vendor/nibble")))?;
     let version = crate::project::version(dir).unwrap_or_default();
@@ -195,6 +255,29 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ruby_and_node_come_from_mise_and_the_rest_from_this_systems_packages() {
+        let arch = "ID=arch\n";
+        assert_eq!(install_hints(&["ruby", "vips"], "linux", arch), [MISE, ARCH]);
+        assert_eq!(install_hints(&["node"], "linux", arch), [MISE], "no package line when only Ruby or Node is missing");
+        assert_eq!(install_hints(&["ffmpeg"], "linux", "ID=endeavouros\nID_LIKE=arch\n"), [ARCH], "Arch's derivatives use pacman too");
+        assert_eq!(install_hints(&["vips"], "linux", "ID=\"linuxmint\"\nID_LIKE=\"ubuntu debian\"\n"), [DEBIAN]);
+        assert_eq!(install_hints(&["vips"], "linux", ""), [DEBIAN, ARCH], "unknown: show the lines people can adapt");
+        assert_eq!(install_hints(&["sqlite3"], "macos", ""), [BREW]);
+    }
+
+    #[test]
+    fn a_ruby_or_node_older_than_the_release_needs_is_named_before_installing() {
+        let declared = "version: 0.19.0\nruby: 4.0.6\nnode: 24.0.0\n";
+        assert!(too_old(declared, Some("4.0.6"), Some("v26.10.0")).is_empty());
+        assert!(too_old(declared, Some("4.1.0"), Some("v24.0.0")).is_empty());
+        let problems = too_old(declared, Some("3.4.10"), Some("v18.19.1"));
+        assert_eq!(problems.len(), 2);
+        assert!(problems[0].contains("Ruby 4.0.6 or newer") && problems[0].contains("has 3.4.10") && problems[0].contains("ruby@4.0.6"));
+        assert!(problems[1].contains("Node 24.0.0 or newer") && problems[1].contains("node@24"));
+        assert!(too_old("version: 0.1.0\n", Some("2.0.0"), None).is_empty(), "an older release that names no minimums");
+    }
 
     #[test]
     fn a_site_name_becomes_one_folder_name() {
