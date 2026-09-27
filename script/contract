@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Boots a Nibble checkout's test database and server, gives the CLI a Draft token, and runs the contract test.
+# Usage: script/contract [path to a Nibble checkout, default ..]
+set -euo pipefail
+
+cli="$(cd "$(dirname "$0")/.." && pwd)"
+site="$(cd "${1:-$cli/..}" && pwd)"
+port="${NIBBLE_CONTRACT_PORT:-3199}"
+url="http://localhost:$port"
+export RAILS_ENV=test SITE_URL="$url"
+
+cd "$site"
+bin/rails db:prepare >/dev/null
+token="$(bin/rails runner '
+  Nibble::Role.seed_defaults!
+  Nibble::AgentAccess.update!(enabled: true)
+  user = Nibble::User.administrators.first || Nibble::User.create!(name: "Contract", email_address: "contract@example.test",
+    password: Nibble::User.generate_password, roles: [ Nibble::Role.find_by!(handle: "admin") ])
+  grant = Nibble::Grant.create!(user:, kind: "ci", name: "Contract", preset: "draft", abilities: Nibble::AgentAccess.preset("draft"),
+    via: "token", expires_at: 1.hour.from_now)
+  print Nibble::OauthToken.issue(grant, "ci", resource: "#{ENV["SITE_URL"]}/api/v2", expires_at: grant.expires_at)
+' | tail -1)"
+
+bin/rails server -p "$port" -P tmp/pids/contract.pid >log/contract-server.log 2>&1 &
+server=$!
+trap 'kill $server 2>/dev/null || true; (cd "$site" && bin/rails db:test:prepare >/dev/null)' EXIT
+for _ in $(seq 1 60); do curl -fsS -o /dev/null "$url/up" && break; sleep 1; done
+
+cd "$cli"
+NIBBLE_CONTRACT_SITE="$url" NIBBLE_CONTRACT_TOKEN="$token" cargo test --test contract -- --nocapture
