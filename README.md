@@ -7,7 +7,7 @@ content of any Nibble site you sign in to, as you and never as more than you.
 
 ## Install
 
-For Linux on Intel or ARM:
+For macOS and Linux, on Intel or ARM:
 
 ```sh
 curl -LsSf https://github.com/mah3uz/nibble-cli/releases/latest/download/nibble-cli-installer.sh | sh
@@ -137,8 +137,11 @@ release, its notes taken from the changelog:
 |---|---|
 | `x86_64-unknown-linux-musl` | `ubuntu-22.04` |
 | `aarch64-unknown-linux-musl` | `ubuntu-24.04-arm` |
+| `aarch64-apple-darwin` | `macos-14` |
+| `x86_64-apple-darwin` | `macos-15-intel` |
 | `x86_64-pc-windows-msvc` | `windows-2022` |
 
-Linux builds are static, so one runs on any distribution. macOS isn't built yet. The settings are in
+Linux builds are static, so one runs on any distribution. macOS builds aren't signed; installed with `curl`, macOS
+doesn't quarantine them, so they run without a warning. The settings are in
 `dist-workspace.toml`; after changing them, run `dist generate` to rewrite the workflow, and `dist plan` to see what a
 release would build.

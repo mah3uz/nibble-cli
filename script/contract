@@ -27,4 +27,4 @@ trap 'kill $server 2>/dev/null || true; (cd "$site" && bin/rails db:test:prepare
 for _ in $(seq 1 60); do curl -fsS -o /dev/null "$url/up" && break; sleep 1; done
 
 cd "$cli"
-NIBBLE_CONTRACT_SITE="$url" NIBBLE_CONTRACT_TOKEN="$token" cargo test --test contract -- --nocapture
+NIBBLE_CONTRACT_SITE="$url" NIBBLE_CONTRACT_TOKEN="$token" NIBBLE_CONTRACT_CHECKOUT="$site" cargo test --test contract -- --nocapture

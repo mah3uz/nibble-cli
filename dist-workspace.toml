@@ -5,8 +5,8 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 ci = "github"
 installers = ["shell", "powershell"]
-# musl so one Linux build runs on any distribution; macOS isn't built yet.
-targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
+# musl so one Linux build runs on any distribution.
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]
 install-path = "~/.local/bin"
 hosting = "github"
 install-updater = false

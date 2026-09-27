@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Builds for macOS,** on Apple Silicon and Intel, installed by the same script as on Linux.
+- **`nibble new` says how to get what's missing** (with Homebrew on macOS, apt on Debian and Ubuntu), asks for
+  another name when the folder is taken, and names the version it unpacked.
+- **`nibble new` works in a folder only you can open,** under a name no one can create first, so the release can't be
+  swapped between checking it and installing it.
+
 ## 0.1.0 - 2026-09-28
 
 - **Start a site:** `nibble new` checks this computer, fetches Nibble's latest release, verifies it against its

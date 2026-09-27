@@ -50,6 +50,32 @@ fn latest(repository: &str) -> Result<String> {
         .with_context(|| format!("{repository} has no release to install yet"))
 }
 
+pub const NIBBLE_REPOSITORY: &str = "mah3uz/nibble";
+
+fn install_hint() -> Option<&'static str> {
+    match std::env::consts::OS {
+        "macos" => Some("Most of these: brew install ruby node sqlite vips ffmpeg"),
+        "linux" => Some("Debian/Ubuntu: sudo apt install ruby-full nodejs npm sqlite3 libvips-tools ffmpeg"),
+        _ => None,
+    }
+}
+
+fn folder_for(name: &str) -> String {
+    let folder = name.split_whitespace().collect::<Vec<_>>().join("-");
+    if folder.is_empty() { "nibble".to_string() } else { folder }
+}
+
+// A folder only this user can open, under a name no one can claim first, so the release can't be swapped after it is verified.
+fn private_work_dir() -> Result<PathBuf> {
+    let mut suffix = [0u8; 8];
+    rand::fill(&mut suffix[..]);
+    let name: String = suffix.iter().map(|byte| format!("{byte:02x}")).collect();
+    let work = std::env::temp_dir().join(format!("nibble-new-{name}"));
+    fs::create_dir(&work).with_context(|| format!("couldn't create {}", work.display()))?;
+    crate::config::private_dir(&work)?;
+    Ok(work)
+}
+
 fn ask_name() -> Result<String> {
     if !std::io::stdin().is_terminal() {
         return Ok("nibble".into());
@@ -65,22 +91,23 @@ pub fn run(name: Option<String>, version: Option<String>, install_args: &[String
     let missing: Vec<String> =
         NEEDS.iter().filter(|(program, _)| !on_path(program)).map(|(program, why)| format!("{program} — {why}")).collect();
     if !missing.is_empty() {
-        bail!("this computer is missing:\n    {}", missing.join("\n    "));
+        let hint = install_hint().map(|hint| format!("\n  {hint}")).unwrap_or_default();
+        bail!("this computer is missing:\n    {}{hint}", missing.join("\n    "));
     }
+    anstream::eprintln!("  {} Everything needed is here", paint(GOOD, "✓"));
 
-    let name = match name {
-        Some(name) => name,
-        None => ask_name()?,
-    };
-    let folder = name.split_whitespace().collect::<Vec<_>>().join("-");
-    let folder = if folder.is_empty() { "nibble".to_string() } else { folder };
+    let asking = name.is_none() && std::io::stdin().is_terminal();
+    let mut folder = folder_for(&name.map_or_else(ask_name, Ok)?);
+    while PathBuf::from(&folder).exists() {
+        if !asking {
+            bail!("{folder} already exists; choose another name");
+        }
+        anstream::eprintln!("  {} {folder} already exists; choose another name", paint(crate::style::BAD, "✗"));
+        folder = folder_for(&ask_name()?);
+    }
     let dir = PathBuf::from(&folder);
-    if dir.exists() {
-        bail!("{folder} already exists; choose another name");
-    }
 
-    let work = std::env::temp_dir().join(format!("nibble-new-{}", std::process::id()));
-    fs::create_dir_all(&work)?;
+    let work = private_work_dir()?;
     let result = fetch_and_unpack(&work, &dir, version);
     let _ = fs::remove_dir_all(&work);
     result?;
@@ -106,7 +133,7 @@ fn fetch_and_unpack(work: &Path, dir: &Path, version: Option<String>) -> Result<
         fs::copy(&sums, work.join("SHA256SUMS")).context("NIBBLE_ARCHIVE needs its SHA256SUMS beside it")?;
         work.join(local.file_name().unwrap())
     } else {
-        let repository = std::env::var("NIBBLE_REPOSITORY").unwrap_or_else(|_| "mah3uz/nibble".into());
+        let repository = std::env::var("NIBBLE_REPOSITORY").unwrap_or_else(|_| NIBBLE_REPOSITORY.into());
         let version = match version.or_else(|| std::env::var("NIBBLE_VERSION").ok()) {
             Some(version) => version,
             None => latest(&repository)?,
@@ -133,7 +160,8 @@ fn fetch_and_unpack(work: &Path, dir: &Path, version: Option<String>) -> Result<
         .context("the archive doesn't hold a nibble- folder")?;
     fs::create_dir_all(dir.join("vendor"))?;
     fs::rename(&source, dir.join("vendor/nibble")).or_else(|_| copy_dir(&source, &dir.join("vendor/nibble")))?;
-    anstream::eprintln!("  {} Unpacked Nibble into {}", paint(GOOD, "✓"), paint(STRONG, dir.display()));
+    let version = crate::project::version(dir).unwrap_or_default();
+    anstream::eprintln!("  {} Unpacked Nibble {} into {}", paint(GOOD, "✓"), paint(STRONG, version), paint(STRONG, dir.display()));
     Ok(())
 }
 
@@ -162,4 +190,27 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_site_name_becomes_one_folder_name() {
+        assert_eq!(folder_for("  Tide water  site "), "Tide-water-site");
+        assert_eq!(folder_for("   "), "nibble", "an empty answer takes the default the question offers");
+    }
+
+    #[test]
+    fn each_install_works_in_a_new_folder_only_its_user_can_open() {
+        let (first, second) = (private_work_dir().unwrap(), private_work_dir().unwrap());
+        assert_ne!(first, second, "a name someone could guess and create first would let them swap the release");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&first).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        let _ = (fs::remove_dir(first), fs::remove_dir(second));
+    }
 }

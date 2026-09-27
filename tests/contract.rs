@@ -72,3 +72,16 @@ fn the_cli_and_the_site_agree_on_the_management_api() {
     assert_eq!(refused["ok"], false);
     assert!(refused["error"]["hint"].is_string(), "refusals carry a hint: {refused}");
 }
+
+// `nibble new` runs before any site exists, so it carries its own copy of where Nibble comes from.
+#[test]
+fn nibble_new_downloads_from_the_repository_nibble_names() {
+    let Ok(checkout) = std::env::var("NIBBLE_CONTRACT_CHECKOUT") else {
+        eprintln!("skipped: run script/contract to compare with a Nibble checkout");
+        return;
+    };
+    let nibble = std::fs::read_to_string(format!("{checkout}/vendor/nibble/lib/nibble.rb")).unwrap();
+    let named = nibble.split("REPOSITORY = \"https://github.com/").nth(1).and_then(|rest| rest.split(".git\"").next()).unwrap();
+    let ours = std::fs::read_to_string("src/new.rs").unwrap();
+    assert!(ours.contains(&format!("pub const NIBBLE_REPOSITORY: &str = \"{named}\";")), "Nibble says {named}");
+}
