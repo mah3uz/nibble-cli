@@ -2,16 +2,14 @@
 
 ## Unreleased
 
-- **`nibble new` points at mise for Ruby and Node,** which distributions package too old for Nibble, and at this
-  system's own packages for the rest: Homebrew, apt, or pacman on Arch Linux and its derivatives.
-- **`nibble new` checks Ruby and Node against what the release needs** before installing anything, and says which
-  version to get, where it used to fail inside `bundle install` or `npm install`.
-
 ## 0.1.1 - 2026-09-28
 
 - **Builds for macOS,** on Apple Silicon and Intel, installed by the same script as on Linux.
-- **`nibble new` says how to get what's missing** (with Homebrew on macOS, apt on Debian and Ubuntu), asks for
-  another name when the folder is taken, and names the version it unpacked.
+- **`nibble new` says how to get what's missing:** mise for Ruby and Node, which distributions package too old for
+  Nibble, and this system's own packages for the rest — Homebrew, apt, or pacman on Arch Linux and its derivatives.
+- **`nibble new` checks Ruby and Node against what the release needs** before installing anything, and says which
+  version to get, where it used to fail inside `bundle install` or `npm install`.
+- **`nibble new` asks for another name when the folder is taken,** and names the version it unpacked.
 - **`nibble new` works in a folder only you can open,** under a name no one can create first, so the release can't be
   swapped between checking it and installing it.
 
