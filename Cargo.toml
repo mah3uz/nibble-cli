@@ -1,6 +1,6 @@
 [package]
 name = "nibble-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Start a Nibble site, run its tasks, and work on your sites' content"
 license = "MIT"
