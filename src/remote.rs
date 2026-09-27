@@ -46,6 +46,7 @@ fn operations(catalogue: &Value) -> &[Value] {
 
 pub fn list(session: &mut Session, output: Output) -> Result<()> {
     let catalogue = session.catalogue()?;
+    crate::complete::remember(session, &catalogue);
     if output.json {
         output.success(&catalogue["data"], Some(&session.origin), None);
         return Ok(());
@@ -99,6 +100,7 @@ pub fn describe(operation: &Value) {
 pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: Option<&str>) -> Result<()> {
     let Some(name) = invocation.operation else { return list(session, output) };
     let catalogue = session.catalogue()?;
+    crate::complete::remember(session, &catalogue);
     let operation = operations(&catalogue)
         .iter()
         .find(|operation| operation["name"] == json!(name))
@@ -115,6 +117,9 @@ pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: 
         anstream::eprintln!("{} {} on {}", paint(CHANGE, "→"), paint(NAME, &name), paint(STRONG, &session.label));
     }
     let response = session.call(&name, &Value::Object(input))?;
+    if name == "describe_site" {
+        crate::complete::remember_site(&session.key(), &response["data"]);
+    }
     output.success(&response["data"], Some(&session.origin), pick);
     Ok(())
 }

@@ -48,6 +48,10 @@ impl Session {
         Session { site, origin, label, profile: None, tokens }
     }
 
+    pub fn key(&self) -> String {
+        self.profile.as_ref().map_or_else(|| crate::complete::token_key(&self.origin), Profile::key)
+    }
+
     fn refresh(&mut self) -> Result<()> {
         let (Some(profile), Some(refresh_token)) = (&self.profile, self.tokens.refresh_token.clone()) else {
             bail!("the token was refused; it may have expired or been revoked");

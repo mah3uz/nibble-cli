@@ -14,6 +14,19 @@ fn nibble(args: &[&str]) -> Value {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(&output.stdout)))
 }
 
+fn complete(words: &[&str], current: &str) -> Vec<String> {
+    let site = std::env::var("NIBBLE_CONTRACT_SITE").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nibble"))
+        .args(["__complete", &format!("--current={current}"), "--", "nibble"])
+        .args(words)
+        .env("NIBBLE_SITE", site)
+        .env("NIBBLE_TOKEN", std::env::var("NIBBLE_CONTRACT_TOKEN").unwrap())
+        .env("NIBBLE_CONFIG_DIR", std::env::temp_dir().join("nibble-contract-config"))
+        .output()
+        .expect("the nibble binary runs");
+    String::from_utf8_lossy(&output.stdout).lines().skip(1).filter_map(|line| line.split('\t').next().map(str::to_string)).collect()
+}
+
 // Runs against a live site: script/contract boots this checkout's Nibble and sets the variables.
 #[test]
 fn the_cli_and_the_site_agree_on_the_management_api() {
@@ -21,6 +34,7 @@ fn the_cli_and_the_site_agree_on_the_management_api() {
         eprintln!("skipped: run script/contract to test against a real site");
         return;
     }
+    let _ = std::fs::remove_dir_all(std::env::temp_dir().join("nibble-contract-config"));
 
     let who = nibble(&["remote", "whoami"]);
     assert_eq!(who["ok"], true, "{who}");
@@ -40,6 +54,11 @@ fn the_cli_and_the_site_agree_on_the_management_api() {
         .expect("a collection stored in the database")
         .to_string();
     assert_eq!(nibble(&["remote", "list_entries", "--collection", &collection, "--per-page", "2"])["ok"], true);
+
+    // Completion reads what `remote` cached from the site, so the site's answers must keep the shape it reads.
+    assert!(complete(&["remote"], "").contains(&"create-entry".to_string()), "operations complete after `remote` has run");
+    assert!(complete(&["remote", "list-entries", "--collection"], "").contains(&collection), "collections complete from describe_site");
+    assert!(!complete(&["remote", "create-entry", "--collection", &collection, "--blueprint"], "").is_empty(), "so do its blueprints");
 
     let rehearsal =
         nibble(&["remote", "create_entry", "--collection", &collection, "--data", r#"{"title":"Contract check"}"#, "--dry-run"]);

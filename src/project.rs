@@ -22,28 +22,49 @@ pub fn version(root: &Path) -> Option<String> {
     })
 }
 
-fn tasks(root: &Path) -> Result<Vec<String>> {
-    let cache = root.join("tmp/nibble-cli-tasks.txt");
-    let stamp = format!("{} {}", version(root).unwrap_or_default(), newest(&root.join("vendor/nibble/lib/commands")));
-    if let Ok(text) = fs::read_to_string(&cache)
+fn cache(root: &Path) -> PathBuf {
+    root.join("tmp/nibble-cli-tasks.txt")
+}
+
+fn parse_tasks(lines: &str) -> Vec<(String, String)> {
+    lines
+        .lines()
+        .filter_map(|line| {
+            let (name, about) = line.split_once('\t').unwrap_or((line, ""));
+            (!name.is_empty()).then(|| (name.to_string(), about.to_string()))
+        })
+        .collect()
+}
+
+pub fn tasks(root: &Path) -> Result<Vec<(String, String)>> {
+    let stamp = format!("2 {} {}", version(root).unwrap_or_default(), newest(&root.join("vendor/nibble/lib/commands")));
+    if let Ok(text) = fs::read_to_string(cache(root))
         && let Some((first, rest)) = text.split_once('\n')
         && first == stamp
     {
-        return Ok(rest.lines().map(str::to_string).collect());
+        return Ok(parse_tasks(rest));
     }
 
     let output = Command::new(root.join("bin/rails")).arg("--help").current_dir(root).output().context("couldn't run bin/rails")?;
-    let names: Vec<String> = String::from_utf8_lossy(&output.stdout)
+    let tasks: Vec<(String, String)> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter_map(|line| line.split_whitespace().next())
-        .filter_map(|name| name.strip_prefix("nibble:").map(str::to_string))
+        .filter_map(|line| {
+            let (name, about) = line.trim().split_once(char::is_whitespace).unwrap_or((line.trim(), ""));
+            name.strip_prefix("nibble:").map(|name| (name.to_string(), about.trim().trim_end_matches("...").trim().to_string()))
+        })
         .collect();
-    if names.is_empty() {
+    if tasks.is_empty() {
         bail!("bin/rails listed no nibble tasks; is this site set up? Try `bin/setup`");
     }
     let _ = fs::create_dir_all(root.join("tmp"));
-    let _ = fs::write(&cache, format!("{stamp}\n{}", names.join("\n")));
-    Ok(names)
+    let lines: Vec<String> = tasks.iter().map(|(name, about)| format!("{name}\t{about}")).collect();
+    let _ = fs::write(cache(root), format!("{stamp}\n{}", lines.join("\n")));
+    Ok(tasks)
+}
+
+// Completion reads only what an earlier, deliberate run cached: pressing Tab must never run a folder's code.
+pub fn cached_tasks(root: &Path) -> Vec<(String, String)> {
+    fs::read_to_string(cache(root)).ok().and_then(|text| text.split_once('\n').map(|(_, rest)| parse_tasks(rest))).unwrap_or_default()
 }
 
 fn newest(dir: &Path) -> u64 {
@@ -69,7 +90,8 @@ fn newest(dir: &Path) -> u64 {
 }
 
 pub fn resolve(root: &Path, words: &[String]) -> Result<(String, Vec<String>)> {
-    longest_match(&tasks(root)?, words)
+    let names: Vec<String> = tasks(root)?.into_iter().map(|(name, _)| name).collect();
+    longest_match(&names, words)
 }
 
 pub fn longest_match(known: &[String], words: &[String]) -> Result<(String, Vec<String>)> {

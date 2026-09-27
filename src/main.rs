@@ -1,6 +1,7 @@
 mod agents;
 mod api;
 mod auth;
+mod complete;
 mod config;
 mod http;
 mod new;
@@ -67,8 +68,19 @@ enum Command {
     },
     /// Check this computer, your sign-ins and the current site
     Doctor,
-    /// Print a shell completion script
-    Completion { shell: clap_complete::Shell },
+    /// Print the script that completes nibble's commands in your shell
+    Completion { shell: complete::Shell },
+    #[command(name = "__complete", hide = true)]
+    Complete {
+        #[arg(long, allow_hyphen_values = true)]
+        line: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        word: Option<String>,
+        #[arg(long, allow_hyphen_values = true)]
+        current: Option<String>,
+        #[arg(last = true, allow_hyphen_values = true)]
+        words: Vec<String>,
+    },
     #[command(external_subcommand)]
     Task(Vec<String>),
 }
@@ -104,8 +116,7 @@ enum AuthCommand {
 enum McpCommand {
     /// Add the site's MCP server to an AI app
     Install {
-        /// claude-code, codex, cursor, claude or chatgpt
-        #[arg(long)]
+        #[arg(long, value_parser = mcp_clients())]
         client: String,
         #[arg(long)]
         name: Option<String>,
@@ -118,14 +129,34 @@ enum McpCommand {
 enum SkillCommand {
     /// Write the site's guide as a skill
     Install {
-        /// claude or codex
-        #[arg(long)]
+        #[arg(long, value_parser = skill_clients())]
         client: Option<String>,
         #[arg(long)]
         dir: Option<std::path::PathBuf>,
     },
     /// Refresh every installed site skill whose site has changed
     Sync,
+}
+
+fn mcp_clients() -> clap::builder::PossibleValuesParser {
+    use clap::builder::PossibleValue;
+    clap::builder::PossibleValuesParser::new([
+        PossibleValue::new("claude-code").help("Claude Code, added for you"),
+        PossibleValue::new("codex").help("Codex, added for you"),
+        PossibleValue::new("cursor").help("Cursor, added for you"),
+        PossibleValue::new("claude").help("Claude's apps: prints where to paste the address"),
+        PossibleValue::new("chatgpt").help("ChatGPT: prints where to paste the address"),
+        PossibleValue::new("claude-desktop").hide(true),
+    ])
+}
+
+fn skill_clients() -> clap::builder::PossibleValuesParser {
+    use clap::builder::PossibleValue;
+    clap::builder::PossibleValuesParser::new([
+        PossibleValue::new("claude").help("Claude Code's skills, in ~/.claude/skills"),
+        PossibleValue::new("codex").help("Codex's skills, in ~/.codex/skills"),
+        PossibleValue::new("claude-code").hide(true),
+    ])
 }
 
 fn main() {
@@ -176,7 +207,19 @@ fn run(cli: Cli, output: Output) -> Result<i32> {
         Command::Skill { command } => skill_command(command, cli.site).map(|_| 0),
         Command::Doctor => doctor(cli.site, output),
         Command::Completion { shell } => {
-            clap_complete::generate(shell, &mut Cli::command(), "nibble", &mut std::io::stdout());
+            print!("{}", complete::script(shell));
+            Ok(0)
+        }
+        Command::Complete { line, word, current, words } => {
+            let (words, current) = match line {
+                Some(line) => complete::split_line(&line),
+                None => (words, current.unwrap_or_default()),
+            };
+            let before = words.get(1..).unwrap_or_default();
+            let known = complete::Known::load(before, std::env::var("NIBBLE_SITE").ok(), |site| target(site).ok());
+            let mut root = Cli::command();
+            root.build();
+            print!("{}", complete::complete(&root, before, &current, &known).render(word.as_deref(), &current));
             Ok(0)
         }
         Command::Task(words) => {
@@ -236,6 +279,7 @@ fn auth_command(command: AuthCommand, site: Option<String>, output: Output) -> R
                 auth::revoke(&profile.site, tokens.refresh_token.as_deref().unwrap_or(&tokens.access_token));
             }
             store::delete(&profile)?;
+            complete::forget(&profile.key());
             let mut config = Config::load()?;
             config.remove(&profile);
             config.save()?;
@@ -336,6 +380,12 @@ fn login(url: &str, device: bool, open_browser: bool, insecure_storage: bool, ou
         config.default = Some(format!("{origin}#{email}"));
     }
     config.save()?;
+    if let Some(profile) = config.by_key(&format!("{origin}#{email}"))
+        && let Ok(mut session) = api::Session::for_profile(profile)
+        && let Ok(catalogue) = session.catalogue()
+    {
+        complete::remember(&mut session, &catalogue);
+    }
     if output.json {
         output.success(&json!({ "site": origin, "account": email, "access": account.access }), Some(&origin), None);
     } else {
@@ -401,6 +451,7 @@ fn doctor(site: Option<String>, output: Output) -> Result<i32> {
     let cwd = std::env::current_dir()?;
     if let Some(root) = project::root(&cwd) {
         check("site folder", Ok(format!("{} runs Nibble {}", root.display(), project::version(&root).unwrap_or_else(|| "?".into()))));
+        check("site tasks", project::tasks(&root).map(|tasks| format!("{} tasks, ready for completion", tasks.len())));
     }
     match target(site) {
         Ok(profile) => {

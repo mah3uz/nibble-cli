@@ -12,5 +12,8 @@
   `nibble skill install` gives them the site's own guide as a skill.
 - **Readable on a terminal:** tables, records as aligned fields, and colour for headings, operations, changes and
   errors, with the site's hint under each error. `NO_COLOR` turns it off; pipes, files and `--json` never get it.
+- **Completion for bash, zsh, fish and PowerShell** that knows the site: its tasks, your sites and accounts, and the
+  operations this connection can run with their arguments and values, such as the collections you may use and the
+  blueprints of the one you named. Pressing Tab never contacts the site or runs anything in the folder.
 - **`--pick` prints the bare value,** even when piped, so `id=$(nibble remote create-entry … --pick id)` works.
 - **Checks the site speaks the same management API,** and says whether the CLI or the site needs upgrading.

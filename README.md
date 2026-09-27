@@ -66,7 +66,34 @@ nibble skill install --client claude      # the site's own guide as a skill; `ni
 
 The site must have Agent access turned on by an administrator.
 
-## Output
+## Shell completion
+
+Add the line for your shell, then open a new terminal:
+
+| Shell | Where | Line |
+|---|---|---|
+| bash | `~/.bashrc` | `eval "$(nibble completion bash)"` |
+| zsh | `~/.zshrc`, after `compinit` | `eval "$(nibble completion zsh)"` |
+| fish | run once | `nibble completion fish > ~/.config/fish/completions/nibble.fish` |
+| PowerShell | `$PROFILE` | `nibble completion powershell \| Out-String \| Invoke-Expression` |
+
+Tab then completes, with a description beside each choice where the shell shows one:
+
+- **Commands and their options**, and only the options not given yet.
+- **Inside a site, its tasks**: `nibble sch` → `schema`, `nibble schema ` → `show`, `snapshot`, `types`.
+- **Your sites and accounts** for `--site`, `auth switch` and `auth logout`; your sites for `auth login`; the apps for
+  `--client`.
+- **What this connection can do on the site**: `nibble remote ` offers its operations, marking those that change
+  content; after one, its arguments; after an argument, its values: the collections, taxonomies, global sets and menus
+  you may use, the blueprints of the collection already given, the site's locales, and statuses and actions. `--data`
+  offers `-` for standard input or `@` and a file.
+
+Pressing Tab never contacts the site, reads the keychain, or runs anything in the folder you're in. It reads what
+`nibble remote` last learned from the site and saved beside your settings; signing in saves the first. After changing
+a site's schema, `nibble remote describe-site` brings completion up to date; otherwise it catches up within the hour.
+A site's tasks are learned the first time you run one, or `nibble doctor`, there.
+
+
 
 On a terminal, lists print as tables and records as aligned fields, with colour for headings, operations and anything
 that changes content. `NO_COLOR=1` turns colour off, and it is never sent to a pipe or a file. Otherwise, or with
