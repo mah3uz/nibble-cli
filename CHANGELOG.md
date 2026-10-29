@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A site's MCP server doesn't repeat "nibble" in its name:** nibble.ink's is `nibble-ink`, where it was
+  `nibble-nibble-ink`; other sites keep `nibble-<host>`. `nibble disconnect <site>` still removes one under the old
+  name, so run it, then `nibble connect <site>`.
+
 ## 0.3.1 - 2026-10-30
 
 - **`nibble connect` asks which apps to set up:** on a terminal it lists Claude Code, Codex, Cursor, Claude and ChatGPT,

@@ -14,7 +14,8 @@ pub fn home() -> Result<PathBuf> {
 
 pub fn server_name(origin: &str) -> String {
     let slug: String = host(origin).chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
-    format!("nibble-{}", slug.trim_matches('-'))
+    let slug = slug.trim_matches('-');
+    if slug == "nibble" || slug.starts_with("nibble-") { slug.to_string() } else { format!("nibble-{slug}") }
 }
 
 pub struct Added {
@@ -413,6 +414,14 @@ mod tests {
         assert_eq!(parse_choice("2,2", &found).unwrap(), ["codex"]);
         assert!(parse_choice("none", &found).unwrap().is_empty());
         assert!(parse_choice("0", &found).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_server_name_doesnt_repeat_nibble() {
+        assert_eq!(server_name("https://nibble.ink"), "nibble-ink");
+        assert_eq!(server_name("https://tidewater.example"), "nibble-tidewater-example");
+        assert_eq!(server_name("http://localhost:3100"), "nibble-localhost-3100");
+        assert_eq!(server_name("https://nibbler.shop"), "nibble-nibbler-shop");
     }
 
     #[test]
