@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-29
+
 - **Upload a file from your computer:** `nibble remote upload-asset --file photo.jpg` streams it to the site and makes
   the asset from it; Tab completes the path.
 - **Approvals are waited for:** when a change needs the person's approval, nibble prints their link and waits until
