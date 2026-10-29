@@ -223,8 +223,32 @@ pub fn client_label(client: &str) -> &'static str {
     match client {
         "claude-code" => "Claude Code",
         "codex" => "Codex",
+        "claude" => "Claude",
+        "chatgpt" => "ChatGPT",
         _ => "Cursor",
     }
+}
+
+pub const CHOICES: [&str; 5] = ["claude-code", "codex", "cursor", "claude", "chatgpt"];
+
+pub fn parse_choice(answer: &str, found: &[&str]) -> Result<Vec<String>> {
+    let answer = answer.trim().to_lowercase();
+    if answer.is_empty() {
+        return Ok(found.iter().map(|client| client.to_string()).collect());
+    }
+    if answer == "none" || answer == "0" {
+        return Ok(Vec::new());
+    }
+    let mut chosen: Vec<String> = Vec::new();
+    for part in answer.split(',') {
+        let number = part.trim().parse::<usize>().ok().filter(|number| (1..=CHOICES.len()).contains(number));
+        let Some(number) = number else { bail!("`{}` isn't one of the numbers listed", part.trim()) };
+        let client = CHOICES[number - 1].to_string();
+        if !chosen.contains(&client) {
+            chosen.push(client);
+        }
+    }
+    Ok(chosen)
 }
 
 pub fn skill_client(client: &str) -> Option<&'static str> {
@@ -376,6 +400,26 @@ mod tests {
         let chosen = plan(&detected, &["cursor".into(), "chatgpt".into()], &root);
         assert_eq!(chosen.iter().map(|plan| plan.client.as_str()).collect::<Vec<_>>(), ["cursor", "chatgpt"]);
         assert!(plan(&[], &[], &root).is_empty(), "nothing found and nothing asked for plans nothing");
+    }
+
+    #[test]
+    fn the_answer_chooses_the_apps_and_enter_takes_those_found() {
+        let found = ["claude-code", "cursor"];
+        assert_eq!(parse_choice("", &found).unwrap(), ["claude-code", "cursor"]);
+        assert_eq!(parse_choice("  \n", &found).unwrap(), ["claude-code", "cursor"]);
+        assert!(parse_choice("", &[]).unwrap().is_empty(), "nothing found means nothing by default");
+        assert_eq!(parse_choice("1,3", &found).unwrap(), ["claude-code", "cursor"]);
+        assert_eq!(parse_choice("2, 5", &found).unwrap(), ["codex", "chatgpt"]);
+        assert_eq!(parse_choice("2,2", &found).unwrap(), ["codex"]);
+        assert!(parse_choice("none", &found).unwrap().is_empty());
+        assert!(parse_choice("0", &found).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_number_outside_the_list_is_refused() {
+        for answer in ["6", "1,9", "codex", "1,,2", "-1"] {
+            assert!(parse_choice(answer, &["codex"]).is_err(), "{answer}");
+        }
     }
 
     #[test]

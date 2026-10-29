@@ -16,7 +16,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use config::{Account, Config, Profile, Site, Storage};
 use output::Output;
 use serde_json::{Value, json};
-use std::io::{IsTerminal, Write};
+use std::io::{BufRead, IsTerminal, Write};
 use style::{BAD, CHANGE, DIM, GOOD, HEADING, NAME, STRONG, paint};
 
 /// Nibble: start a site, run its tasks, and work on the content of the sites you're signed in to.
@@ -57,12 +57,12 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         words: Vec<String>,
     },
-    /// Connect the AI apps to a site in the current project: MCP server and skill, in one step
+    /// Ask which AI apps to set up for a site in the current project: MCP server and skill, in one step
     Connect {
         /// The site, like example.com; signs you in if you aren't
         #[arg(value_name = "SITE")]
         address: Option<String>,
-        /// Only these apps, instead of every one found
+        /// Set up exactly these apps without asking; otherwise you are asked which
         #[arg(long, value_parser = mcp_clients(), value_delimiter = ',')]
         client: Vec<String>,
     },
@@ -434,20 +434,12 @@ fn offer_apps(origin: &str, email: &str) {
     }
     let host = config::host(origin);
     let names = clients.iter().map(|client| agents::client_label(client)).collect::<Vec<_>>().join(", ");
-    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+    if !can_ask() {
         anstream::eprintln!("{}", paint(DIM, format!("To connect {names} to {host}, run: nibble connect {host}")));
         return;
     }
-    anstream::eprint!(
-        "{} {} ",
-        paint(STRONG, format!("Connect {names} to {host} over MCP, and install the site's guide as a skill?")),
-        paint(DIM, "[Y/n]")
-    );
-    let mut answer = String::new();
-    if std::io::stderr().flush().is_err()
-        || std::io::stdin().read_line(&mut answer).is_err()
-        || answer.trim().to_lowercase().starts_with('n')
-    {
+    let Ok(chosen) = choose_apps(&host, &clients, &mut std::io::stdin().lock()) else { return };
+    if chosen.is_empty() {
         return;
     }
     let session = Config::load()
@@ -460,9 +452,56 @@ fn offer_apps(origin: &str, email: &str) {
         anstream::eprintln!("{} {error:#}", paint(CHANGE, "!"));
         return;
     }
-    for plan in agents::plan(&clients, &[], &project) {
+    for plan in agents::plan(&[], &chosen, &project) {
         connect_client(&mut session, &plan, &project);
     }
+}
+
+fn can_ask() -> bool {
+    std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+}
+
+fn choose_apps(host: &str, found: &[&str], input: &mut impl BufRead) -> Result<Vec<String>> {
+    anstream::eprintln!("{}", paint(STRONG, format!("Which AI apps should use {host}'s tools in this folder?")));
+    for (number, client) in agents::CHOICES.iter().enumerate() {
+        let note = match *client {
+            "claude" | "chatgpt" => "prints where to paste the address",
+            _ if found.contains(client) => "found on this computer",
+            _ => "",
+        };
+        anstream::eprintln!("  {} {} {}", paint(DIM, number + 1), agents::client_label(client), paint(DIM, note));
+    }
+    let default = agents::CHOICES
+        .iter()
+        .enumerate()
+        .filter(|(_, client)| found.contains(client))
+        .map(|(number, _)| (number + 1).to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let default = if default.is_empty() { "none".to_string() } else { default };
+    loop {
+        anstream::eprint!("{} ", paint(STRONG, format!("Numbers, comma-separated; Enter for {default}; 0 or none to skip:")));
+        std::io::stderr().flush()?;
+        let mut answer = String::new();
+        if input.read_line(&mut answer)? == 0 {
+            bail!("no answer given");
+        }
+        match agents::parse_choice(&answer, found) {
+            Ok(chosen) => return Ok(chosen),
+            Err(error) => anstream::eprintln!("{} {error:#}", paint(CHANGE, "!")),
+        }
+    }
+}
+
+fn client_hint(address: Option<&str>, found: &[&str]) -> String {
+    let site = address.unwrap_or("example.com");
+    let apps = if found.is_empty() { agents::CHOICES.join(",") } else { found.join(",") };
+    let found_note = if found.is_empty() {
+        "no AI app was found on this computer".to_string()
+    } else {
+        format!("found {}", found.iter().map(|client| agents::client_label(client)).collect::<Vec<_>>().join(", "))
+    };
+    format!("there is no terminal to ask which AI apps to set up ({found_note}); choose them with: nibble connect {site} --client {apps}")
 }
 
 fn site_reference(config: &Config, address: Option<String>) -> Result<String> {
@@ -490,6 +529,10 @@ fn site_reference(config: &Config, address: Option<String>) -> Result<String> {
 }
 
 fn connect(address: Option<String>, only: &[String], output: Output) -> Result<i32> {
+    let found = agents::installed_clients();
+    if only.is_empty() && !can_ask() {
+        bail!("{}", client_hint(address.as_deref(), &found));
+    }
     let mut session = if std::env::var("NIBBLE_TOKEN").is_ok() {
         session(address)?
     } else {
@@ -506,12 +549,13 @@ fn connect(address: Option<String>, only: &[String], output: Output) -> Result<i
     let host = config::host(&session.origin);
     let project_dir = std::env::current_dir()?;
     agents::guard_project(&project_dir, &session.origin)?;
-    let plans = agents::plan(&agents::installed_clients(), only, &project_dir);
-    if plans.is_empty() {
-        anstream::eprintln!("No AI app found: nibble looks for Claude Code, Codex and Cursor. To connect another, add this MCP address:");
+    let chosen = if only.is_empty() { choose_apps(&host, &found, &mut std::io::stdin().lock())? } else { only.to_vec() };
+    if chosen.is_empty() {
+        anstream::eprintln!("No AI app chosen. To connect one yourself, add this MCP address:");
         println!("{}/mcp", session.site.issuer);
         return Ok(0);
     }
+    let plans = agents::plan(&[], &chosen, &project_dir);
     for plan in &plans {
         connect_client(&mut session, plan, &project_dir);
     }
@@ -676,6 +720,23 @@ fn doctor(site: Option<String>, output: Output) -> Result<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asking_takes_the_found_apps_on_enter_and_asks_again_after_a_bad_number() {
+        let ask = |text: &str, found: &[&str]| choose_apps("example.com", found, &mut std::io::Cursor::new(text.to_string()));
+        assert_eq!(ask("\n", &["codex"]).unwrap(), ["codex"]);
+        assert_eq!(ask("1,3\n", &["codex"]).unwrap(), ["claude-code", "cursor"]);
+        assert!(ask("none\n", &["codex"]).unwrap().is_empty());
+        assert_eq!(ask("9\n2\n", &[]).unwrap(), ["codex"], "a number off the list asks again");
+        assert!(ask("9\n", &[]).is_err(), "no more input after a bad answer is an error");
+    }
+
+    #[test]
+    fn without_a_terminal_the_hint_names_the_command_and_the_found_apps() {
+        let hint = client_hint(Some("example.com"), &["claude-code", "codex"]);
+        assert!(hint.contains("nibble connect example.com --client claude-code,codex"), "{hint}");
+        assert!(client_hint(None, &[]).contains("--client claude-code,codex,cursor,claude,chatgpt"));
+    }
 
     #[test]
     fn doctor_says_when_the_sign_in_ends_if_unused() {
