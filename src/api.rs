@@ -9,6 +9,8 @@ use std::path::Path;
 use std::time::Duration;
 
 pub const API_VERSION: u32 = 2;
+// Version 1 sites differ only in how rich text inside blocks reads, which nothing here depends on.
+const OLDEST_API_VERSION: u32 = 1;
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(900);
 const RELEASES: &str = "https://github.com/mah3uz/nibble-cli/releases";
 
@@ -98,6 +100,18 @@ impl Session {
                 .timeout(UPLOAD_TIMEOUT)
                 .body(reqwest::blocking::Body::sized(file, size)))
         })
+        .map_err(|error| {
+            if error.to_string().contains("answered 404") {
+                anyhow::anyhow!("{} doesn't take files this way yet; ask its administrator to run `bin/rails nibble:upgrade`", self.origin)
+            } else {
+                error
+            }
+        })
+    }
+
+    pub fn site_flag(&self) -> String {
+        let host = crate::config::host(&self.origin);
+        self.profile.as_ref().map_or_else(|| host.clone(), |profile| format!("{host}:{}", profile.account.email))
     }
 
     fn send(&mut self, build: impl Fn(&reqwest::blocking::Client, &str) -> Result<reqwest::blocking::RequestBuilder>) -> Result<Value> {
@@ -129,13 +143,13 @@ impl Session {
 // Only the side that is behind can fix a mismatch, so the message names it.
 fn check_version(origin: &str, header: Option<&str>) -> Result<()> {
     match header.and_then(|value| value.trim().parse::<u32>().ok()) {
-        Some(API_VERSION) => Ok(()),
+        Some(site) if (OLDEST_API_VERSION..=API_VERSION).contains(&site) => Ok(()),
         Some(site) if site > API_VERSION => bail!(
             "{origin} speaks version {site} of Nibble's management API, and this nibble only version {API_VERSION}; \
              install the latest nibble from {RELEASES}"
         ),
         _ => bail!(
-            "{origin} runs a Nibble older than this nibble supports (it needs management API version {API_VERSION}); \
+            "{origin} runs a Nibble older than this nibble supports (it needs management API version {OLDEST_API_VERSION}); \
              ask the site's administrator to run `bin/rails nibble:upgrade`, or use an older nibble"
         ),
     }
@@ -148,6 +162,11 @@ mod tests {
     #[test]
     fn a_site_on_the_same_contract_is_used() {
         assert!(check_version("https://example.com", Some(&API_VERSION.to_string())).is_ok());
+    }
+
+    #[test]
+    fn a_site_on_the_previous_contract_is_still_used() {
+        assert!(check_version("https://example.com", Some("1")).is_ok(), "sites that haven't upgraded yet keep working");
     }
 
     #[test]

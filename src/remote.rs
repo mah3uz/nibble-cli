@@ -169,7 +169,14 @@ pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: 
                 if no_wait {
                     anstream::eprintln!(
                         "{}",
-                        paint(DIM, format!("Check it later with `nibble remote get-approval --approval {}`.", approval.id))
+                        paint(
+                            DIM,
+                            format!(
+                                "Check it later with `nibble remote get-approval --site {} --approval {}`.",
+                                session.site_flag(),
+                                approval.id
+                            )
+                        )
                     );
                     return Ok(());
                 }
@@ -272,9 +279,11 @@ pub fn next_delay(previous: Duration) -> Duration {
 }
 
 fn wait_for(session: &mut Session, approval: &Approval) -> Result<Value> {
-    let id = approval.id.clone();
+    let (id, site) = (approval.id.clone(), session.site_flag());
     let _ = ctrlc::set_handler(move || {
-        anstream::eprintln!("\nStopped waiting; the request stays open. Check it with: nibble remote get-approval --approval {id}");
+        anstream::eprintln!(
+            "\nStopped waiting; the request stays open. Check it with: nibble remote get-approval --site {site} --approval {id}"
+        );
         std::process::exit(130);
     });
     anstream::eprintln!("{}", paint(DIM, "Waiting for approval… (Ctrl-C to stop waiting; the request stays open)"));
