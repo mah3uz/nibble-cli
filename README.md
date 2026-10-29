@@ -69,13 +69,23 @@ can read, and `nibble doctor` says so.
 ## AI apps
 
 ```sh
-nibble mcp install --client claude-code   # or codex, cursor; claude and chatgpt print where to paste the address
-nibble skill install --client claude      # the site's own guide as a skill; `nibble skill sync` refreshes it
+nibble connect example.com      # signs in if needed, then adds the MCP server and the site's guide to every app found
+nibble connect --client codex   # only these apps (claude-code, codex, cursor; claude and chatgpt print where to paste the address)
+nibble connect --project        # for the project in this folder instead of for you
+nibble disconnect example.com   # removes them again; it doesn't sign you out, `nibble auth logout` does
 ```
 
-After `nibble auth login`, if Claude Code, Codex or Cursor is on this computer, nibble offers to connect it and install
-the guide in one step; it prints the commands instead when it can't ask. `nibble doctor` shows when the sign-in ends if
-it goes unused.
+`connect` never asks questions and can be run again: the server entry is replaced and the skill refreshed. It looks
+for Claude Code, Codex and Cursor, and prints the MCP address when it finds none. With `--project`, Claude Code gets
+`claude mcp add --scope project` and `./.claude/skills`, Codex `./.codex/config.toml` (read once you trust the project)
+and `./.codex/skills`, and Cursor `./.cursor/mcp.json`. `disconnect` removes only that site's entries and skill
+folders (add `--project` for this folder's) and leaves everything else alone.
+
+For finer control, `nibble mcp install --client claude-code` and `nibble skill install --client claude` do each part
+alone, and `nibble skill sync` refreshes installed skills.
+
+After `nibble auth login`, nibble offers to run the same on a terminal, and prints `nibble connect <site>` when it
+can't ask. `nibble doctor` shows when the sign-in ends if it goes unused.
 
 The site must have Agent access turned on by an administrator.
 

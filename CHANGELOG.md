@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **`nibble connect [site]` and `nibble disconnect [site]`:** connect every AI app found (Claude Code, Codex, Cursor)
+  to a site in one step, signing in first if needed, and undo it. `--client` chooses apps and `--project` connects the
+  folder you're in instead of you. `nibble auth login` now prints `nibble connect <site>` where it can't ask.
+
 ## 0.2.0 - 2026-10-29
 
 - **Upload a file from your computer:** `nibble remote upload-asset --file photo.jpg` streams it to the site and makes
