@@ -290,7 +290,17 @@ fn wait_for(session: &mut Session, approval: &Approval) -> Result<Value> {
     let mut delay = FIRST_POLL;
     loop {
         std::thread::sleep(delay);
-        let reply = session.call("get_approval", &json!({ "approval": approval.id }))?;
+        let reply = match session.call("get_approval", &json!({ "approval": approval.id })) {
+            Ok(reply) => reply,
+            Err(error) if error.downcast_ref::<Problem>().is_some_and(|problem| problem.code == "unknown_operation") => {
+                bail!(
+                    "{} doesn't make approved changes itself yet: approve it at the link, then run the same command again with --approval {}",
+                    session.origin,
+                    approval.id
+                )
+            }
+            Err(error) => return Err(error),
+        };
         match poll_decision(&reply["data"]) {
             Poll::Waiting => delay = next_delay(delay),
             Poll::Done(result) => {
