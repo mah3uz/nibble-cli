@@ -495,14 +495,12 @@ fn connect(address: Option<String>, only: &[String], project: bool, output: Outp
     } else {
         let config = Config::load()?;
         let reference = site_reference(&config, address)?;
-        match config.find(&reference) {
-            Ok(_) => session(Some(reference))?,
-            Err(error) if error.to_string().starts_with("no signed-in account") => {
-                let (origin, email) = login(&reference, false, true, false, output)?;
-                let profile = Config::load()?.by_key(&format!("{origin}#{email}")).context("the sign-in wasn't saved")?;
-                api::Session::for_profile(profile)?
-            }
-            Err(error) => return Err(error),
+        if config.matching(&reference).is_empty() {
+            let (origin, email) = login(&reference, false, true, false, output)?;
+            let profile = Config::load()?.by_key(&format!("{origin}#{email}")).context("the sign-in wasn't saved")?;
+            api::Session::for_profile(profile)?
+        } else {
+            session(Some(reference))?
         }
     };
     let host = config::host(&session.origin);

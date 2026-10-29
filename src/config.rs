@@ -113,18 +113,21 @@ impl Config {
             .collect()
     }
 
-    pub fn find(&self, reference: &str) -> Result<Profile> {
+    pub fn matching(&self, reference: &str) -> Vec<Profile> {
         let (site_part, account_part) = match reference.rsplit_once(':') {
             Some((site, account)) if account.contains('@') => (site, Some(account)),
             _ => (reference, None),
         };
         let wanted = site_part.trim_end_matches('/');
-        let matches: Vec<Profile> = self
-            .profiles()
+        self.profiles()
             .into_iter()
             .filter(|profile| profile.origin == wanted || host(&profile.origin) == wanted || profile.site.name.eq_ignore_ascii_case(wanted))
             .filter(|profile| account_part.is_none_or(|email| profile.account.email.eq_ignore_ascii_case(email)))
-            .collect();
+            .collect()
+    }
+
+    pub fn find(&self, reference: &str) -> Result<Profile> {
+        let matches = self.matching(reference);
         match matches.len() {
             0 => bail!("no signed-in account matches {reference}; run `nibble auth list`"),
             1 => Ok(matches.into_iter().next().unwrap()),
