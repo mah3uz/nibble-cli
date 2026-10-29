@@ -117,6 +117,7 @@ pub fn remove_mcp(client: &str, origin: &str, issuer: &str, root: &Path, project
     let url = format!("{issuer}/mcp");
     let name = server_name(origin);
     match client {
+        "claude-code" if project => remove_json_server(&root.join(".mcp.json"), &name, &url, root),
         "claude-code" => {
             if !which("claude") {
                 return Ok(None);
@@ -124,7 +125,7 @@ pub fn remove_mcp(client: &str, origin: &str, issuer: &str, root: &Path, project
             let mut command = Command::new("claude");
             command.args(claude_args("remove", &name, &url, project)).current_dir(root);
             let removed = command.output().is_ok_and(|output| output.status.success());
-            Ok(removed.then(|| format!("Removed {name} from Claude Code ({} scope)", if project { "project" } else { "user" })))
+            Ok(removed.then(|| format!("Removed {name} from Claude Code (user scope)")))
         }
         "codex" => {
             let path = mcp_file(client, root).unwrap();
@@ -136,27 +137,54 @@ pub fn remove_mcp(client: &str, origin: &str, issuer: &str, root: &Path, project
             if servers.len() == before {
                 return Ok(None);
             }
+            if servers.is_empty() {
+                table.remove("mcp_servers");
+            }
+            if table.is_empty() {
+                fs::remove_file(&path)?;
+                if project {
+                    remove_empty(&path, root);
+                }
+                return Ok(Some(format!("Removed {}", path.display())));
+            }
             fs::write(&path, toml::to_string_pretty(&table)?)?;
             Ok(Some(format!("Removed the site from {}", path.display())))
         }
-        "cursor" => {
-            let path = mcp_file(client, root).unwrap();
-            let Ok(text) = fs::read_to_string(&path) else { return Ok(None) };
-            let mut config: Value = serde_json::from_str(&text)?;
-            let Some(servers) = config["mcpServers"].as_object_mut() else { return Ok(None) };
-            let before = servers.len();
-            servers.retain(|key, value| !is_ours(key, value["url"].as_str(), &name, &url));
-            if servers.len() == before {
-                return Ok(None);
-            }
-            fs::write(&path, serde_json::to_string_pretty(&config)?)?;
-            Ok(Some(format!("Removed the site from {}", path.display())))
-        }
+        "cursor" => remove_json_server(&mcp_file(client, root).unwrap(), &name, &url, if project { root } else { Path::new("") }),
         _ => Ok(None),
     }
 }
 
-pub fn remove_skills(root: &Path, origin: &str) -> Vec<PathBuf> {
+// A file or folder Nibble made that holds nothing else would only be clutter in the project.
+fn remove_json_server(path: &Path, name: &str, url: &str, root: &Path) -> Result<Option<String>> {
+    let Ok(text) = fs::read_to_string(path) else { return Ok(None) };
+    let mut config: Value = serde_json::from_str(&text)?;
+    let Some(servers) = config["mcpServers"].as_object_mut() else { return Ok(None) };
+    let before = servers.len();
+    servers.retain(|key, value| !is_ours(key, value["url"].as_str(), name, url));
+    if servers.len() == before {
+        return Ok(None);
+    }
+    if servers.is_empty() && config.as_object().is_some_and(|object| object.len() == 1) {
+        fs::remove_file(path)?;
+        remove_empty(path, root);
+        return Ok(Some(format!("Removed {}", path.display())));
+    }
+    fs::write(path, serde_json::to_string_pretty(&config)?)?;
+    Ok(Some(format!("Removed the site from {}", path.display())))
+}
+
+fn remove_empty(path: &Path, root: &Path) {
+    let mut dir = path.parent();
+    while let Some(folder) = dir {
+        if root.as_os_str().is_empty() || folder == root || !folder.starts_with(root) || fs::remove_dir(folder).is_err() {
+            break;
+        }
+        dir = folder.parent();
+    }
+}
+
+pub fn remove_skills(root: &Path, origin: &str, project: bool) -> Vec<PathBuf> {
     let mut removed = Vec::new();
     for base in [".claude/skills", ".codex/skills"] {
         let Ok(entries) = fs::read_dir(root.join(base)) else { continue };
@@ -165,6 +193,11 @@ pub fn remove_skills(root: &Path, origin: &str) -> Vec<PathBuf> {
             if marker_origin(&path).as_deref() == Some(origin) && fs::remove_dir_all(&path).is_ok() {
                 removed.push(path);
             }
+        }
+    }
+    if project {
+        for path in &removed {
+            remove_empty(path, root);
         }
     }
     removed
@@ -481,6 +514,43 @@ mod tests {
     }
 
     #[test]
+    fn disconnecting_the_only_server_removes_the_files_and_folders_it_leaves_empty() {
+        let root = scratch("disconnect-empty");
+        fs::write(
+            root.join(".mcp.json"),
+            json!({ "mcpServers": { "nibble-old-name": { "type": "http", "url": "https://a.example/mcp" } } }).to_string(),
+        )
+        .unwrap();
+        install_mcp("codex", "https://a.example", "https://a.example", None, &root).unwrap();
+        install_mcp("cursor", "https://a.example", "https://a.example", None, &root).unwrap();
+        fs::create_dir_all(root.join(".codex/skills/nibble-a")).unwrap();
+        fs::write(root.join(".codex/skills/nibble-a").join(MARKER), json!({ "origin": "https://a.example" }).to_string()).unwrap();
+
+        for client in ["claude-code", "codex", "cursor"] {
+            assert!(remove_mcp(client, "https://a.example", "https://a.example", &root, true).unwrap().is_some(), "{client}");
+        }
+        remove_skills(&root, "https://a.example", true);
+
+        assert!(!root.join(".mcp.json").exists(), "an entry under an older name is found by its address");
+        assert!(!root.join(".codex").exists());
+        assert!(!root.join(".cursor").exists());
+        assert!(root.exists());
+    }
+
+    #[test]
+    fn a_file_with_other_servers_keeps_them() {
+        let root = scratch("disconnect-keep");
+        let both =
+            json!({ "mcpServers": { "nibble-a-example": { "url": "https://a.example/mcp" }, "nibble-dev": { "command": "bin/rails" } } });
+        fs::write(root.join(".mcp.json"), both.to_string()).unwrap();
+
+        remove_mcp("claude-code", "https://a.example", "https://a.example", &root, true).unwrap();
+
+        let kept: Value = serde_json::from_str(&fs::read_to_string(root.join(".mcp.json")).unwrap()).unwrap();
+        assert_eq!(kept["mcpServers"].as_object().unwrap().keys().collect::<Vec<_>>(), ["nibble-dev"]);
+    }
+
+    #[test]
     fn disconnecting_removes_only_the_sites_skill_folders() {
         let root = scratch("skills");
         for (dir, name, origin) in [
@@ -494,7 +564,7 @@ mod tests {
         }
         fs::create_dir_all(root.join(".claude/skills/hand-written")).unwrap();
 
-        assert_eq!(remove_skills(&root, "https://a.example").len(), 2);
+        assert_eq!(remove_skills(&root, "https://a.example", true).len(), 2);
 
         assert!(!root.join(".claude/skills/nibble-a").exists());
         assert!(!root.join(".codex/skills/nibble-a").exists());
@@ -549,7 +619,9 @@ mod tests {
 
         assert!(remove_mcp("codex", "https://a.example", "https://a.example", &home, false).unwrap().is_some());
         assert!(remove_mcp("cursor", "https://a.example", "https://a.example", &home, false).unwrap().is_some());
-        assert_eq!(remove_skills(&home, "https://a.example"), [folder]);
+        let skills = folder.parent().unwrap().to_path_buf();
+        assert_eq!(remove_skills(&home, "https://a.example", false), [folder]);
+        assert!(skills.exists(), "a folder in the home directory stays, even empty");
     }
 
     #[test]

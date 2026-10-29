@@ -7,6 +7,10 @@
 - **A site's MCP server doesn't repeat "nibble" in its name:** nibble.ink's is `nibble-ink`, where it was
   `nibble-nibble-ink`; other sites keep `nibble-<host>`. `nibble disconnect <site>` still removes one under the old
   name, so run it, then `nibble connect <site>`.
+- **`nibble disconnect` leaves no empty files behind:** when the site's server was the only one in `.mcp.json`,
+  `.cursor/mcp.json` or `.codex/config.toml`, the file goes, and so do the project's `.codex`, `.cursor` and `skills`
+  folders it leaves empty. It finds a server by its address as well as its name, so one added under an older name is
+  removed too. Files with other servers, and folders in your home directory, are kept.
 
 ## 0.3.1 - 2026-10-30
 

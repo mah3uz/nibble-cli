@@ -586,7 +586,7 @@ fn disconnect(address: Option<String>) -> Result<i32> {
                 Err(error) => anstream::eprintln!("{} {}: {error:#}", paint(CHANGE, "!"), agents::client_label(client)),
             }
         }
-        for folder in agents::remove_skills(root, &origin) {
+        for folder in agents::remove_skills(root, &origin, *is_project) {
             any = true;
             style::done(format!("Removed {}", paint(STRONG, folder.display())));
         }
