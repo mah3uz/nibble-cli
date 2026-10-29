@@ -11,7 +11,8 @@
 - **`nibble auth login` offers to connect AI apps:** Claude Code, Codex or Cursor, if installed, are connected over MCP
   with the site's guide installed as a skill; the commands are printed when there's no terminal to ask in.
 - **`nibble doctor` says when the sign-in ends** if it goes unused.
-- **Speaks version 2 of the management API,** which uploads and approvals need.
+- **Works with sites on management API version 1 or 2.** Uploading with `--file` needs a site on version 2, and
+  says so otherwise.
 - **`nibble new` installs without the shell's `NIBBLE_THEME`,** which names a theme the new site doesn't have.
 
 ## 0.1.2 - 2026-10-29
