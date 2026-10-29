@@ -682,7 +682,7 @@ mod tests {
 
     #[test]
     fn a_skill_never_goes_through_a_link_or_into_a_folder_it_didnt_write() {
-        let dir = scratch("skills");
+        let dir = scratch("skills-taken");
         let elsewhere = scratch("skills-elsewhere");
         std::os::unix::fs::symlink(&elsewhere, dir.join("nibble-theming")).unwrap();
         assert_eq!(skill_folder(&dir, "nibble-theming", "https://a.example"), dir.join("nibble-theming-site"));
