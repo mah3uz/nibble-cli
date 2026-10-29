@@ -16,6 +16,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use config::{Account, Config, Profile, Site, Storage};
 use output::Output;
 use serde_json::{Value, json};
+use std::io::{IsTerminal, Write};
 use style::{BAD, CHANGE, DIM, GOOD, HEADING, NAME, STRONG, paint};
 
 /// Nibble: start a site, run its tasks, and work on the content of the sites you're signed in to.
@@ -195,7 +196,8 @@ fn run(cli: Cli, output: Output) -> Result<i32> {
             let (words, globals) = remote::globals(words);
             let output = if globals.json { Output::new(true) } else { output };
             let mut session = session(globals.site.or(cli.site))?;
-            remote::run(&mut session, remote::parse(words), output, globals.pick.as_deref().or(cli.pick.as_deref())).map(|_| 0)
+            remote::run(&mut session, remote::parse(words), output, globals.pick.as_deref().or(cli.pick.as_deref()), globals.no_wait)
+                .map(|_| 0)
         }
         Command::Mcp { command } => {
             let session = session(cli.site)?;
@@ -398,8 +400,57 @@ fn login(url: &str, device: bool, open_browser: bool, insecure_storage: bool, ou
             paint(STRONG, &email),
             paint(DIM, format!("({} access)", account.access))
         ));
+        offer_apps(&origin, &email);
     }
     Ok(())
+}
+
+fn offer_apps(origin: &str, email: &str) {
+    let clients = agents::installed_clients();
+    if clients.is_empty() {
+        return;
+    }
+    let host = config::host(origin);
+    let names = clients.iter().map(|client| agents::client_label(client)).collect::<Vec<_>>().join(", ");
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        anstream::eprintln!("{}", paint(DIM, format!("To connect {names} to {host}:")));
+        for client in &clients {
+            anstream::eprintln!("  nibble mcp install --client {client} --site {host}");
+            if let Some(skill) = agents::skill_client(client) {
+                anstream::eprintln!("  nibble skill install --client {skill} --site {host}");
+            }
+        }
+        return;
+    }
+    anstream::eprint!(
+        "{} {} ",
+        paint(STRONG, format!("Connect {names} to {host} over MCP, and install the site's guide as a skill?")),
+        paint(DIM, "[Y/n]")
+    );
+    let mut answer = String::new();
+    if std::io::stderr().flush().is_err()
+        || std::io::stdin().read_line(&mut answer).is_err()
+        || answer.trim().to_lowercase().starts_with('n')
+    {
+        return;
+    }
+    let session = Config::load()
+        .ok()
+        .and_then(|config| config.by_key(&format!("{origin}#{email}")))
+        .and_then(|profile| api::Session::for_profile(profile).ok());
+    let Some(mut session) = session else { return };
+    for client in clients {
+        match agents::install_mcp(client, origin, &session.site.issuer, None) {
+            Ok(message) => style::done(message),
+            Err(error) => anstream::eprintln!("{} {}: {error:#}", paint(CHANGE, "!"), agents::client_label(client)),
+        }
+        let Some(skill) = agents::skill_client(client) else { continue };
+        let installed = agents::skills_dir(Some(skill), None).and_then(|dir| agents::install_skill(&mut session, &dir));
+        match installed {
+            Ok((folder, _)) => style::done(format!("Wrote {}", paint(STRONG, folder.join("SKILL.md").display()))),
+            Err(error) => anstream::eprintln!("{} the guide for {}: {error:#}", paint(CHANGE, "!"), agents::client_label(client)),
+        }
+    }
 }
 
 fn skill_command(command: SkillCommand, site: Option<String>) -> Result<()> {
@@ -434,6 +485,11 @@ fn skill_command(command: SkillCommand, site: Option<String>) -> Result<()> {
     Ok(())
 }
 
+fn sign_in_ends(who: &Value) -> Option<String> {
+    let at = who["connection"]["expires_at"].as_str()?;
+    Some(format!("ends {} unless used", at.split('T').next().unwrap_or(at)))
+}
+
 fn doctor(site: Option<String>, output: Output) -> Result<i32> {
     let mut checks: Vec<(String, bool, String)> = Vec::new();
     let mut check = |name: &str, result: Result<String>| match result {
@@ -465,8 +521,9 @@ fn doctor(site: Option<String>, output: Output) -> Result<i32> {
                 "site",
                 api::Session::for_profile(profile).and_then(|mut session| session.call("whoami", &json!({}))).map(|who| {
                     format!(
-                        "{} access, can: {}",
+                        "{} access{}, can: {}",
                         who["data"]["connection"]["access"].as_str().unwrap_or("?"),
+                        sign_in_ends(&who["data"]).map(|ends| format!(", {ends}")).unwrap_or_default(),
                         who["data"]["can"].as_object().map(|can| can.keys().cloned().collect::<Vec<_>>().join(", ")).unwrap_or_default()
                     )
                 }),
@@ -491,4 +548,16 @@ fn doctor(site: Option<String>, output: Output) -> Result<i32> {
         }
     }
     Ok(if healthy { 0 } else { 1 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doctor_says_when_the_sign_in_ends_if_unused() {
+        let who = json!({ "connection": { "expires_at": "2027-01-27T09:30:00Z" } });
+        assert_eq!(sign_in_ends(&who).as_deref(), Some("ends 2027-01-27 unless used"));
+        assert_eq!(sign_in_ends(&json!({ "connection": { "expires_at": null } })), None, "a connection that doesn't end says nothing");
+    }
 }

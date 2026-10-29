@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Upload a file from your computer:** `nibble remote upload-asset --file photo.jpg` streams it to the site and makes
+  the asset from it; Tab completes the path.
+- **Approvals are waited for:** when a change needs the person's approval, nibble prints their link and waits until
+  it's made, then prints the result. `--no-wait` returns at once with the link, and `--json` or a pipe never waits.
+- **`nibble remote` lists what this connection can't do,** with the access each needs, and says so when you call one,
+  where it used to say there was no such operation.
+- **`nibble auth login` offers to connect AI apps:** Claude Code, Codex or Cursor, if installed, are connected over MCP
+  with the site's guide installed as a skill; the commands are printed when there's no terminal to ask in.
+- **`nibble doctor` says when the sign-in ends** if it goes unused.
+- **Speaks version 2 of the management API,** which uploads and approvals need.
+- **`nibble new` installs without the shell's `NIBBLE_THEME`,** which names a theme the new site doesn't have.
+
 ## 0.1.2 - 2026-10-29
 
 - **A new site's tasks complete straight away:** `nibble new` learns them once the install finishes, where they used

@@ -44,6 +44,14 @@ nibble remote update-entry --id 12 --lock-version 3 --data '{"title":"Better tit
 
 Every operation comes from the site itself, so `nibble remote` always matches the site you're signed in to.
 Changes to entries are drafts until someone who may publish does. Add `--dry-run` to see a change without saving it.
+What this connection can't do is listed after the rest, with the access it needs.
+
+- **Upload a file:** `nibble remote upload-asset --file photo.jpg --folder Blog --alt "A cat"` sends the file from your
+  computer (streamed, under its own name unless you add `--filename`) and makes the asset from it.
+- **Changes that need approval:** some changes wait for the person you act for. The command prints their link and waits
+  while they approve it in the Control Plane, then prints the result as usual. Ctrl-C stops waiting and leaves the
+  request open (`nibble remote get-approval --approval <id>` checks on it later); `--no-wait` prints the link and
+  returns at once. With `--json` or a pipe it never waits and answers with the `approval_required` error and its link.
 
 - **More than one site or account:** `nibble auth list`, `nibble auth switch example.com:you@example.com`, or
   `--site` on any command.
@@ -63,6 +71,10 @@ can read, and `nibble doctor` says so.
 nibble mcp install --client claude-code   # or codex, cursor; claude and chatgpt print where to paste the address
 nibble skill install --client claude      # the site's own guide as a skill; `nibble skill sync` refreshes it
 ```
+
+After `nibble auth login`, if Claude Code, Codex or Cursor is on this computer, nibble offers to connect it and install
+the guide in one step; it prints the commands instead when it can't ask. `nibble doctor` shows when the sign-in ends if
+it goes unused.
 
 The site must have Agent access turned on by an administrator.
 

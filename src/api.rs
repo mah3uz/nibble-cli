@@ -4,8 +4,12 @@ use crate::http::{self, Problem};
 use crate::store::{self, Tokens};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
+use std::fs;
+use std::path::Path;
+use std::time::Duration;
 
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: u32 = 2;
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(900);
 const RELEASES: &str = "https://github.com/mah3uz/nibble-cli/releases";
 
 pub struct Session {
@@ -74,23 +78,37 @@ impl Session {
 
     pub fn call(&mut self, operation: &str, input: &Value) -> Result<Value> {
         let url = format!("{}/operations/{}", self.site.api, operation);
-        self.send(|client, token| client.post(&url).bearer_auth(token).json(input))
+        self.send(|client, token| Ok(client.post(&url).bearer_auth(token).json(input)))
     }
 
     pub fn catalogue(&mut self) -> Result<Value> {
         let url = format!("{}/operations", self.site.api);
-        self.send(|client, token| client.get(&url).bearer_auth(token))
+        self.send(|client, token| Ok(client.get(&url).bearer_auth(token)))
     }
 
-    fn send(&mut self, build: impl Fn(&reqwest::blocking::Client, &str) -> reqwest::blocking::RequestBuilder) -> Result<Value> {
+    pub fn upload(&mut self, path: &Path, filename: &str) -> Result<Value> {
+        let url = format!("{}/uploads", self.site.api);
+        let size = fs::metadata(path).with_context(|| format!("couldn't read {}", path.display()))?.len();
+        self.send(|client, token| {
+            let file = fs::File::open(path).with_context(|| format!("couldn't read {}", path.display()))?;
+            Ok(client
+                .put(&url)
+                .query(&[("filename", filename)])
+                .bearer_auth(token)
+                .timeout(UPLOAD_TIMEOUT)
+                .body(reqwest::blocking::Body::sized(file, size)))
+        })
+    }
+
+    fn send(&mut self, build: impl Fn(&reqwest::blocking::Client, &str) -> Result<reqwest::blocking::RequestBuilder>) -> Result<Value> {
         if !self.tokens.fresh() {
             self.refresh()?;
         }
         let client = http::client();
-        let mut response = build(&client, &self.tokens.access_token).send().with_context(|| format!("couldn't reach {}", self.origin))?;
+        let mut response = build(&client, &self.tokens.access_token)?.send().with_context(|| format!("couldn't reach {}", self.origin))?;
         if response.status().as_u16() == 401 && self.tokens.refresh_token.is_some() {
             self.refresh()?;
-            response = build(&client, &self.tokens.access_token).send()?;
+            response = build(&client, &self.tokens.access_token)?.send()?;
         }
         let status = response.status().as_u16();
         let version = response.headers().get("nibble-api-version").and_then(|value| value.to_str().ok());

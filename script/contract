@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boots a Nibble checkout's test database and server, gives the CLI a Draft token, and runs the contract test.
+# Boots a Nibble checkout's test database and server, gives the CLI a Draft token that may also upload, and runs the contract test.
 # Usage: script/contract [path to a Nibble checkout, default ..]
 set -euo pipefail
 
@@ -13,10 +13,10 @@ cd "$site"
 bin/rails db:prepare >/dev/null
 token="$(bin/rails runner '
   Nibble::Role.seed_defaults!
-  Nibble::AgentAccess.update!(enabled: true)
+  Nibble::AgentAccess.update!(enabled: true, areas: { "assets" => { "read" => true, "write" => true } })
   user = Nibble::User.administrators.first || Nibble::User.create!(name: "Contract", email_address: "contract@example.test",
     password: Nibble::User.generate_password, roles: [ Nibble::Role.find_by!(handle: "admin") ])
-  grant = Nibble::Grant.create!(user:, kind: "ci", name: "Contract", preset: "draft", abilities: Nibble::AgentAccess.preset("draft"),
+  grant = Nibble::Grant.create!(user:, kind: "ci", name: "Contract", preset: "draft", abilities: Nibble::AgentAccess.preset("draft") + %w[assets.upload],
     via: "token", expires_at: 1.hour.from_now)
   print Nibble::OauthToken.issue(grant, "ci", resource: "#{ENV["SITE_URL"]}/api/v1", expires_at: grant.expires_at)
 ' | tail -1)"

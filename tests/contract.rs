@@ -71,7 +71,26 @@ fn the_cli_and_the_site_agree_on_the_management_api() {
     assert_eq!(refused["error"]["code"], "forbidden", "a Draft token never publishes: {refused}");
     assert_eq!(refused["ok"], false);
     assert!(refused["error"]["hint"].is_string(), "refusals carry a hint: {refused}");
+
+    let dir = std::env::temp_dir().join("nibble-contract-upload");
+    std::fs::create_dir_all(&dir).unwrap();
+    let name = format!("contract-upload-{}.png", std::process::id());
+    let path = dir.join(&name);
+    std::fs::write(&path, ONE_PIXEL_PNG).unwrap();
+    let uploaded = nibble(&["remote", "upload-asset", "--file", path.to_str().unwrap(), "--alt", "Contract check"]);
+    assert_eq!(uploaded["ok"], true, "{uploaded}");
+    assert_eq!(uploaded["data"]["filename"], name.as_str(), "the asset keeps the uploaded file's name: {uploaded}");
+    let listed = nibble(&["remote", "list-assets", "--filename", &name]);
+    let names: Vec<&str> = listed["data"]["assets"].as_array().unwrap().iter().filter_map(|asset| asset["filename"].as_str()).collect();
+    assert!(names.contains(&name.as_str()), "{listed}");
 }
+
+const ONE_PIXEL_PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63,
+    0xf8, 0xcf, 0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
+    0xae, 0x42, 0x60, 0x82,
+];
 
 // `nibble new` runs before any site exists, so it carries its own copy of where Nibble comes from.
 #[test]

@@ -64,8 +64,50 @@ pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String
     }
 }
 
+fn on_path(dirs: &[PathBuf], program: &str) -> bool {
+    dirs.iter().any(|dir| dir.join(program).is_file())
+}
+
+fn path_dirs() -> Vec<PathBuf> {
+    std::env::var_os("PATH").map(|paths| std::env::split_paths(&paths).collect()).unwrap_or_default()
+}
+
 fn which(program: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+    on_path(&path_dirs(), program)
+}
+
+pub fn detect_clients(path: &[PathBuf], home: &Path) -> Vec<&'static str> {
+    let mut found = Vec::new();
+    if on_path(path, "claude") {
+        found.push("claude-code");
+    }
+    if on_path(path, "codex") {
+        found.push("codex");
+    }
+    if on_path(path, "cursor") || home.join(".cursor").is_dir() {
+        found.push("cursor");
+    }
+    found
+}
+
+pub fn installed_clients() -> Vec<&'static str> {
+    home().map(|home| detect_clients(&path_dirs(), &home)).unwrap_or_default()
+}
+
+pub fn client_label(client: &str) -> &'static str {
+    match client {
+        "claude-code" => "Claude Code",
+        "codex" => "Codex",
+        _ => "Cursor",
+    }
+}
+
+pub fn skill_client(client: &str) -> Option<&'static str> {
+    match client {
+        "claude-code" => Some("claude"),
+        "codex" => Some("codex"),
+        _ => None,
+    }
 }
 
 pub fn skills_dir(client: Option<&str>, dir: Option<PathBuf>) -> Result<PathBuf> {
@@ -123,4 +165,40 @@ pub fn installed_skills() -> Vec<(PathBuf, String)> {
         }
     }
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool(dir: &Path, name: &str) {
+        fs::write(dir.join(name), "").unwrap();
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("nibble-agents-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn apps_are_found_by_their_command_on_the_path() {
+        let (bin, home) = (scratch("bin"), scratch("home"));
+        tool(&bin, "claude");
+        tool(&bin, "codex");
+        assert_eq!(detect_clients(std::slice::from_ref(&bin), &home), ["claude-code", "codex"]);
+        assert_eq!(detect_clients(&[scratch("empty")], &home), Vec::<&str>::new(), "nothing installed offers nothing");
+    }
+
+    #[test]
+    fn cursor_is_found_by_its_command_or_its_folder_at_home() {
+        let (bin, home) = (scratch("cursor-bin"), scratch("cursor-home"));
+        assert!(detect_clients(std::slice::from_ref(&bin), &home).is_empty());
+        fs::create_dir(home.join(".cursor")).unwrap();
+        assert_eq!(detect_clients(std::slice::from_ref(&bin), &home), ["cursor"]);
+        let (bin, home) = (scratch("cursor-bin2"), scratch("cursor-home2"));
+        tool(&bin, "cursor");
+        assert_eq!(detect_clients(&[bin], &home), ["cursor"]);
+    }
 }

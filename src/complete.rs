@@ -291,11 +291,12 @@ fn task(typed: &[String], current: &str, known: &Known) -> Completion {
     if steps.is_empty() { Completion::fallback(Fallback::Files) } else { Completion::of(current, steps) }
 }
 
-const REMOTE_FLAGS: [(&str, &str); 4] = [
+const REMOTE_FLAGS: [(&str, &str); 5] = [
     ("--help", "Show the operation's arguments"),
     ("--json", "Print JSON"),
     ("--site", "The site to use"),
     ("--pick", "Print only this part of the result"),
+    ("--no-wait", "Don't wait for an approval; print its link"),
 ];
 
 fn remote(words: &[String], current: &str, known: &Known) -> Completion {
@@ -316,7 +317,14 @@ fn remote(words: &[String], current: &str, known: &Known) -> Completion {
             let key = key.replace('-', "_");
             if let Some(op) = operation {
                 let schema = &op["input"]["properties"][&key];
-                if inline.is_none() && !schema.is_null() && !is_boolean(schema) {
+                let file = key == "file" && is_upload(op);
+                if inline.is_none() && file {
+                    if last {
+                        return files(current, "");
+                    }
+                    given.push((key, words.get(index + 1).cloned()));
+                    index += 1;
+                } else if inline.is_none() && !schema.is_null() && !is_boolean(schema) {
                     if last {
                         return property_values(op, &key, &given, current, known);
                     }
@@ -353,6 +361,9 @@ fn remote(words: &[String], current: &str, known: &Known) -> Completion {
 
     if let Some((key, value)) = current.strip_prefix("--").and_then(|flag| flag.split_once('=')) {
         let key = key.replace('-', "_");
+        if key == "file" && is_upload(op) {
+            return files(value, "").prefixed(&current[..current.len() - value.len()]);
+        }
         return property_values(op, &key, &given, value, known).prefixed(&current[..current.len() - value.len()]);
     }
     if !current.is_empty() && !current.starts_with('-') {
@@ -371,8 +382,15 @@ fn remote(words: &[String], current: &str, known: &Known) -> Completion {
             (format!("--{}", key.replace('_', "-")), about)
         })
         .collect();
+    if is_upload(op) && !given.iter().any(|(seen, _)| seen == "file") {
+        candidates.push(("--file".into(), "Upload this file from your computer".into()));
+    }
     candidates.extend(REMOTE_FLAGS.iter().map(|(flag, help)| (flag.to_string(), help.to_string())));
     Completion::of(current, candidates)
+}
+
+fn is_upload(op: &Value) -> bool {
+    op["name"] == json!("upload_asset")
 }
 
 fn kind(schema: &Value) -> String {
@@ -463,6 +481,10 @@ fn files_as_input(current: &str) -> Completion {
             ],
         );
     };
+    files(path, "@")
+}
+
+fn files(path: &str, lead: &str) -> Completion {
     let (dir, stem) = match path.rfind('/') {
         Some(slash) => (&path[..=slash], &path[slash + 1..]),
         None => ("", path),
@@ -474,9 +496,9 @@ fn files_as_input(current: &str) -> Completion {
             return None;
         }
         let slash = if entry.path().is_dir() { "/" } else { "" };
-        Some((format!("@{dir}{name}{slash}"), String::new()))
+        Some((format!("{lead}{dir}{name}{slash}"), String::new()))
     });
-    Completion::of(current, candidates.collect::<Vec<_>>())
+    Completion::of(&format!("{lead}{path}"), candidates.collect::<Vec<_>>())
 }
 
 // Completion reads this instead of asking the site, so pressing Tab never waits on the network or touches the keychain.
@@ -617,6 +639,8 @@ mod tests {
                     { "name": "create_entry", "title": "Create an entry", "annotations": { "readOnlyHint": false },
                       "input": { "properties": { "collection": { "type": "string" }, "blueprint": { "type": "string" },
                                                  "data": { "type": "object" }, "dry_run": { "type": "boolean" } } } },
+                    { "name": "upload_asset", "title": "Upload an asset", "annotations": { "readOnlyHint": false },
+                      "input": { "properties": { "url": { "type": "string" }, "folder": { "type": "string" } } } },
                     { "name": "get_global", "title": "Read a global set", "annotations": { "readOnlyHint": true },
                       "input": { "properties": { "handle": { "type": "string" } } } },
                     { "name": "describe_schema", "title": "Describe fields", "annotations": { "readOnlyHint": true },
@@ -710,7 +734,7 @@ mod tests {
         assert_eq!(values("nibble remote list-entries --collection=p"), ["--collection=posts", "--collection=pages"]);
         assert_eq!(
             values("nibble remote create-entry --dry-run "),
-            ["--collection", "--blueprint", "--data", "--help", "--json", "--site", "--pick"]
+            ["--collection", "--blueprint", "--data", "--help", "--json", "--site", "--pick", "--no-wait"]
         );
     }
 
@@ -723,6 +747,19 @@ mod tests {
         let typed = format!("@{}/c", dir.display());
         let offered = values(&format!("nibble remote create-entry --data {typed}"));
         assert_eq!(offered, [format!("@{}/change.json", dir.display())]);
+    }
+
+    #[test]
+    fn upload_asset_offers_file_and_then_the_files_on_disk() {
+        assert!(values("nibble remote upload-asset --").contains(&"--file".to_string()));
+        assert!(!values("nibble remote create-entry --").contains(&"--file".to_string()), "only uploads take a file");
+        let dir = std::env::temp_dir().join("nibble-complete-files-test");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("photo.jpg"), "").unwrap();
+        let typed = format!("{}/ph", dir.display());
+        assert_eq!(values(&format!("nibble remote upload-asset --file {typed}")), [format!("{}/photo.jpg", dir.display())]);
+        assert_eq!(values(&format!("nibble remote upload-asset --file={typed}")), [format!("--file={}/photo.jpg", dir.display())]);
+        assert!(!values(&format!("nibble remote upload-asset --file {}/photo.jpg ", dir.display())).contains(&"--file".to_string()));
     }
 
     #[test]
