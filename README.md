@@ -70,8 +70,8 @@ can read, and `nibble doctor` says so.
 
 ```sh
 cd my-project
-nibble connect example.com      # signs in if needed, then adds the MCP server and the site's guide to every app found
-nibble connect --client codex   # only these apps (claude-code, codex, cursor; claude and chatgpt print where to paste the address)
+nibble connect example.com      # signs in if needed, asks which AI apps to set up, then adds the MCP server and the site's guide
+nibble connect --client codex   # exactly these apps, without asking (claude-code, codex, cursor; claude and chatgpt print where to paste the address)
 nibble disconnect example.com   # removes them again; it doesn't sign you out, `nibble auth logout` does
 ```
 
@@ -81,15 +81,17 @@ never user-wide: Claude Code gets `claude mcp add --scope project` and `./.claud
 `./.cursor/mcp.json`. A folder that is another Nibble site's project is refused, so one site's tools never land in
 another's; run it from the site's own folder or a folder that isn't a Nibble site.
 
-`connect` never asks questions and can be run again: the server entry is replaced and the skill refreshed. It looks
-for Claude Code, Codex and Cursor, and prints the MCP address when it finds none. `disconnect` removes only that
+`connect` asks "Which AI apps should use <site>'s tools in this folder?" and lists Claude Code, Codex, Cursor, Claude and
+ChatGPT, marking those found on this computer; Enter sets up the ones found, numbers separated by commas choose, and
+`0` or `none` skips. Without a terminal it writes nothing and prints the command with `--client` to run. It can be run
+again: the server entry is replaced and the skill refreshed. It prints the MCP address when you choose no app. `disconnect` removes only that
 site's entries and skill folders from the current project, and from the user-wide places older versions of nibble
 wrote to, and leaves everything else alone.
 
 For finer control, `nibble mcp install --client claude-code` and `nibble skill install --client claude` do each part
 alone (also into the current project), and `nibble skill sync` refreshes the project's installed skills.
 
-After `nibble auth login`, nibble offers to run the same on a terminal, and prints `nibble connect <site>` when it
+After `nibble auth login`, nibble asks the same question on a terminal, and prints `nibble connect <site>` when it
 can't ask. `nibble doctor` shows when the sign-in ends if it goes unused.
 
 The site must have Agent access turned on by an administrator.
