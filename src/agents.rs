@@ -8,7 +8,7 @@ use std::process::Command;
 
 const MARKER: &str = ".nibble-skill.json";
 
-fn home() -> Result<PathBuf> {
+pub fn home() -> Result<PathBuf> {
     dirs::home_dir().context("this system has no home folder")
 }
 
@@ -17,24 +17,68 @@ pub fn server_name(origin: &str) -> String {
     format!("nibble-{}", slug.trim_matches('-'))
 }
 
-pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String>) -> Result<String> {
+pub struct Added {
+    pub done: String,
+    pub next: String,
+}
+
+impl Added {
+    fn new(done: impl Into<String>, next: impl Into<String>) -> Self {
+        Added { done: done.into(), next: next.into() }
+    }
+
+    pub fn line(&self) -> String {
+        if self.next.is_empty() { self.done.clone() } else { format!("{}. {}", self.done, self.next) }
+    }
+}
+
+pub fn claude_args(verb: &str, name: &str, url: &str, project: bool) -> Vec<String> {
+    let scope = if project { "project" } else { "user" };
+    let mut args: Vec<&str> = vec!["mcp", verb];
+    if verb == "add" {
+        args.extend(["--transport", "http"]);
+    }
+    args.extend(["--scope", scope, name]);
+    if verb == "add" {
+        args.push(url);
+    }
+    args.into_iter().map(str::to_string).collect()
+}
+
+pub fn mcp_file(client: &str, root: &Path) -> Option<PathBuf> {
+    match client {
+        "codex" => Some(root.join(".codex/config.toml")),
+        "cursor" => Some(root.join(".cursor/mcp.json")),
+        _ => None,
+    }
+}
+
+pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String>, project: Option<&Path>) -> Result<Added> {
     let url = format!("{issuer}/mcp");
     let name = name.unwrap_or_else(|| server_name(origin));
+    let root = match project {
+        Some(dir) => dir.to_path_buf(),
+        None => home()?,
+    };
     match client {
         "claude-code" => {
-            let args = ["mcp", "add", "--transport", "http", "--scope", "user", name.as_str(), url.as_str()];
+            let args = claude_args("add", &name, &url, project.is_some());
             if which("claude") {
-                let status = Command::new("claude").args(args).status()?;
-                if !status.success() {
+                let mut command = Command::new("claude");
+                command.args(&args);
+                if let Some(dir) = project {
+                    command.current_dir(dir);
+                }
+                if !command.status()?.success() {
                     bail!("`claude {}` failed", args.join(" "));
                 }
-                Ok(format!("Added {name} to Claude Code. In Claude Code, run /mcp to sign in."))
+                Ok(Added::new(format!("Added {name} to Claude Code"), "In Claude Code, run /mcp to sign in"))
             } else {
-                Ok(format!("Claude Code isn't on this computer's PATH. Once it is, run:\n  claude {}", args.join(" ")))
+                Ok(Added::new("Claude Code isn't on this computer's PATH", format!("Once it is, run: claude {}", args.join(" "))))
             }
         }
         "codex" => {
-            let path = home()?.join(".codex/config.toml");
+            let path = mcp_file(client, &root).unwrap();
             let mut table: toml::Table = if path.exists() { fs::read_to_string(&path)?.parse()? } else { toml::Table::new() };
             let servers = table.entry("mcp_servers").or_insert_with(|| toml::Value::Table(toml::Table::new()));
             let servers = servers.as_table_mut().context("mcp_servers in Codex's config isn't a table")?;
@@ -43,10 +87,16 @@ pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String
             servers.insert(name.clone(), toml::Value::Table(server));
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, toml::to_string_pretty(&table)?)?;
-            Ok(format!("Added {name} to {}. Now run: codex mcp login {name}", path.display()))
+            Ok(Added::new(
+                format!("Added {name} to {}", path.display()),
+                format!(
+                    "Now run: codex mcp login {name}{}",
+                    if project.is_some() { ". Codex reads a project's config once you trust the project" } else { "" }
+                ),
+            ))
         }
         "cursor" => {
-            let path = home()?.join(".cursor/mcp.json");
+            let path = mcp_file(client, &root).unwrap();
             let mut config: Value = if path.exists() { serde_json::from_str(&fs::read_to_string(&path)?)? } else { json!({}) };
             if !config["mcpServers"].is_object() {
                 config["mcpServers"] = json!({});
@@ -54,14 +104,97 @@ pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String
             config["mcpServers"][&name] = json!({ "url": url });
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, serde_json::to_string_pretty(&config)?)?;
-            Ok(format!("Added {name} to {}. Cursor asks you to sign in the first time it's used.", path.display()))
+            Ok(Added::new(format!("Added {name} to {}", path.display()), "Cursor asks you to sign in the first time it's used"))
         }
-        "claude" | "claude-desktop" | "chatgpt" => Ok(format!(
-            "In {}, open Settings → Connectors → Add custom connector, and paste:\n  {url}\nIt signs you in on the site. The site must be reachable from the internet for hosted apps.",
-            if client == "chatgpt" { "ChatGPT" } else { "Claude" }
+        "claude" | "claude-desktop" | "chatgpt" => Ok(Added::new(
+            format!("{} can't be set up from here", if client == "chatgpt" { "ChatGPT" } else { "Claude" }),
+            format!(
+                "Open Settings → Connectors → Add custom connector, and paste {url}. It signs you in on the site, which must be reachable from the internet for hosted apps"
+            ),
         )),
         other => bail!("unknown client {other}; use claude-code, codex, cursor, claude or chatgpt"),
     }
+}
+
+fn is_ours(key: &str, entry_url: Option<&str>, name: &str, url: &str) -> bool {
+    key == name || entry_url == Some(url)
+}
+
+pub fn remove_mcp(client: &str, origin: &str, issuer: &str, root: &Path, project: bool) -> Result<Option<String>> {
+    let url = format!("{issuer}/mcp");
+    let name = server_name(origin);
+    match client {
+        "claude-code" => {
+            if !which("claude") {
+                return Ok(None);
+            }
+            let mut command = Command::new("claude");
+            command.args(claude_args("remove", &name, &url, project)).current_dir(root);
+            let removed = command.output().is_ok_and(|output| output.status.success());
+            Ok(removed.then(|| format!("Removed {name} from Claude Code ({} scope)", if project { "project" } else { "user" })))
+        }
+        "codex" => {
+            let path = mcp_file(client, root).unwrap();
+            let Ok(text) = fs::read_to_string(&path) else { return Ok(None) };
+            let mut table: toml::Table = text.parse()?;
+            let Some(servers) = table.get_mut("mcp_servers").and_then(toml::Value::as_table_mut) else { return Ok(None) };
+            let before = servers.len();
+            servers.retain(|key, value| !is_ours(key, value.get("url").and_then(toml::Value::as_str), &name, &url));
+            if servers.len() == before {
+                return Ok(None);
+            }
+            fs::write(&path, toml::to_string_pretty(&table)?)?;
+            Ok(Some(format!("Removed the site from {}", path.display())))
+        }
+        "cursor" => {
+            let path = mcp_file(client, root).unwrap();
+            let Ok(text) = fs::read_to_string(&path) else { return Ok(None) };
+            let mut config: Value = serde_json::from_str(&text)?;
+            let Some(servers) = config["mcpServers"].as_object_mut() else { return Ok(None) };
+            let before = servers.len();
+            servers.retain(|key, value| !is_ours(key, value["url"].as_str(), &name, &url));
+            if servers.len() == before {
+                return Ok(None);
+            }
+            fs::write(&path, serde_json::to_string_pretty(&config)?)?;
+            Ok(Some(format!("Removed the site from {}", path.display())))
+        }
+        _ => Ok(None),
+    }
+}
+
+pub fn remove_skills(root: &Path, origin: &str) -> Vec<PathBuf> {
+    let mut removed = Vec::new();
+    for base in [".claude/skills", ".codex/skills"] {
+        let Ok(entries) = fs::read_dir(root.join(base)) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if marker_origin(&path).as_deref() == Some(origin) && fs::remove_dir_all(&path).is_ok() {
+                removed.push(path);
+            }
+        }
+    }
+    removed
+}
+
+pub struct Plan {
+    pub client: String,
+    pub skills: Option<PathBuf>,
+}
+
+pub fn plan(detected: &[&str], only: &[String], root: &Path) -> Vec<Plan> {
+    let clients: Vec<String> = if only.is_empty() { detected.iter().map(|client| client.to_string()).collect() } else { only.to_vec() };
+    clients
+        .into_iter()
+        .map(|client| {
+            let skills = skill_client(&client).map(|skill| skills_in(skill, root));
+            Plan { client, skills }
+        })
+        .collect()
+}
+
+fn skills_in(skill_client: &str, root: &Path) -> PathBuf {
+    root.join(if skill_client == "codex" { ".codex/skills" } else { ".claude/skills" })
 }
 
 fn on_path(dirs: &[PathBuf], program: &str) -> bool {
@@ -113,8 +246,8 @@ pub fn skill_client(client: &str) -> Option<&'static str> {
 pub fn skills_dir(client: Option<&str>, dir: Option<PathBuf>) -> Result<PathBuf> {
     match (client, dir) {
         (_, Some(dir)) => Ok(dir),
-        (Some("claude") | Some("claude-code"), None) => Ok(home()?.join(".claude/skills")),
-        (Some("codex"), None) => Ok(home()?.join(".codex/skills")),
+        (Some("claude") | Some("claude-code"), None) => Ok(skills_in("claude", &home()?)),
+        (Some("codex"), None) => Ok(skills_in("codex", &home()?)),
         (Some(other), None) => bail!("unknown client {other}; use claude or codex, or --dir"),
         (None, None) => bail!("say where: --client claude, --client codex, or --dir PATH"),
     }
@@ -231,5 +364,91 @@ mod tests {
         let (bin, home) = (scratch("cursor-bin2"), scratch("cursor-home2"));
         tool(&bin, "cursor");
         assert_eq!(detect_clients(&[bin], &home), ["cursor"]);
+    }
+
+    #[test]
+    fn connect_plans_every_detected_app_unless_told_which() {
+        let root = scratch("plan");
+        let detected = ["claude-code", "codex", "cursor"];
+        let all = plan(&detected, &[], &root);
+        assert_eq!(all.iter().map(|plan| plan.client.as_str()).collect::<Vec<_>>(), detected);
+        assert_eq!(all[0].skills, Some(root.join(".claude/skills")));
+        assert_eq!(all[1].skills, Some(root.join(".codex/skills")));
+        assert_eq!(all[2].skills, None, "Cursor has no skills to write");
+
+        let chosen = plan(&detected, &["cursor".into(), "chatgpt".into()], &root);
+        assert_eq!(chosen.iter().map(|plan| plan.client.as_str()).collect::<Vec<_>>(), ["cursor", "chatgpt"]);
+        assert!(plan(&[], &[], &root).is_empty(), "nothing found and nothing asked for plans nothing");
+    }
+
+    #[test]
+    fn claude_is_added_and_removed_in_the_scope_asked_for() {
+        assert_eq!(
+            claude_args("add", "nibble-x", "https://x/mcp", true),
+            ["mcp", "add", "--transport", "http", "--scope", "project", "nibble-x", "https://x/mcp"]
+        );
+        assert_eq!(claude_args("remove", "nibble-x", "https://x/mcp", false), ["mcp", "remove", "--scope", "user", "nibble-x"]);
+    }
+
+    #[test]
+    fn a_project_connection_is_written_inside_the_project_and_can_be_repeated() {
+        let project = scratch("project");
+        for _ in 0..2 {
+            install_mcp("codex", "https://a.example", "https://a.example", None, Some(&project)).unwrap();
+            install_mcp("cursor", "https://a.example", "https://a.example", None, Some(&project)).unwrap();
+        }
+        let codex: toml::Table = fs::read_to_string(project.join(".codex/config.toml")).unwrap().parse().unwrap();
+        assert_eq!(codex["mcp_servers"]["nibble-a-example"]["url"].as_str(), Some("https://a.example/mcp"));
+        assert_eq!(codex["mcp_servers"].as_table().unwrap().len(), 1, "connecting again replaces the entry");
+        let cursor: Value = serde_json::from_str(&fs::read_to_string(project.join(".cursor/mcp.json")).unwrap()).unwrap();
+        assert_eq!(cursor["mcpServers"]["nibble-a-example"]["url"], "https://a.example/mcp");
+    }
+
+    #[test]
+    fn disconnecting_a_site_leaves_other_sites_and_other_servers_alone() {
+        let root = scratch("disconnect");
+        install_mcp("codex", "https://a.example", "https://a.example", None, Some(&root)).unwrap();
+        install_mcp("codex", "https://b.example", "https://b.example", None, Some(&root)).unwrap();
+        install_mcp("cursor", "https://a.example", "https://a.example", None, Some(&root)).unwrap();
+        install_mcp("cursor", "https://b.example", "https://b.example", None, Some(&root)).unwrap();
+        let custom_name = Some("work-cms".to_string());
+        install_mcp("cursor", "https://a.example", "https://a.example", custom_name, Some(&root)).unwrap();
+        let cursor_path = root.join(".cursor/mcp.json");
+        let mut cursor: Value = serde_json::from_str(&fs::read_to_string(&cursor_path).unwrap()).unwrap();
+        cursor["mcpServers"]["figma"] = json!({ "url": "https://figma.example/mcp" });
+        fs::write(&cursor_path, cursor.to_string()).unwrap();
+
+        assert!(remove_mcp("codex", "https://a.example", "https://a.example", &root, true).unwrap().is_some());
+        assert!(remove_mcp("cursor", "https://a.example", "https://a.example", &root, true).unwrap().is_some());
+        assert!(remove_mcp("cursor", "https://a.example", "https://a.example", &root, true).unwrap().is_none(), "nothing left to remove");
+
+        let codex: toml::Table = fs::read_to_string(root.join(".codex/config.toml")).unwrap().parse().unwrap();
+        assert_eq!(codex["mcp_servers"].as_table().unwrap().keys().collect::<Vec<_>>(), ["nibble-b-example"]);
+        let cursor: Value = serde_json::from_str(&fs::read_to_string(cursor_path).unwrap()).unwrap();
+        let mut kept: Vec<_> = cursor["mcpServers"].as_object().unwrap().keys().cloned().collect();
+        kept.sort();
+        assert_eq!(kept, ["figma", "nibble-b-example"], "an entry under another name but this site's address goes too");
+    }
+
+    #[test]
+    fn disconnecting_removes_only_the_sites_skill_folders() {
+        let root = scratch("skills");
+        for (dir, name, origin) in [
+            (".claude/skills", "nibble-a", "https://a.example"),
+            (".codex/skills", "nibble-a", "https://a.example"),
+            (".claude/skills", "nibble-b", "https://b.example"),
+        ] {
+            let folder = root.join(dir).join(name);
+            fs::create_dir_all(&folder).unwrap();
+            fs::write(folder.join(MARKER), json!({ "origin": origin }).to_string()).unwrap();
+        }
+        fs::create_dir_all(root.join(".claude/skills/hand-written")).unwrap();
+
+        assert_eq!(remove_skills(&root, "https://a.example").len(), 2);
+
+        assert!(!root.join(".claude/skills/nibble-a").exists());
+        assert!(!root.join(".codex/skills/nibble-a").exists());
+        assert!(root.join(".claude/skills/nibble-b").exists(), "another site's skill stays");
+        assert!(root.join(".claude/skills/hand-written").exists(), "a skill nibble didn't write stays");
     }
 }
