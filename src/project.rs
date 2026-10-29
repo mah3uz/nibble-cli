@@ -37,7 +37,7 @@ fn parse_tasks(lines: &str) -> Vec<(String, String)> {
 }
 
 pub fn tasks(root: &Path) -> Result<Vec<(String, String)>> {
-    let stamp = format!("2 {} {}", version(root).unwrap_or_default(), newest(&root.join("vendor/nibble/lib/commands")));
+    let stamp = format!("3 {} {}", version(root).unwrap_or_default(), newest(&root.join("vendor/nibble/lib/commands")));
     if let Ok(text) = fs::read_to_string(cache(root))
         && let Some((first, rest)) = text.split_once('\n')
         && first == stamp
@@ -45,12 +45,18 @@ pub fn tasks(root: &Path) -> Result<Vec<(String, String)>> {
         return Ok(parse_tasks(rest));
     }
 
-    let output = Command::new(root.join("bin/rails")).arg("--help").current_dir(root).output().context("couldn't run bin/rails")?;
+    // Thor cuts each line to the terminal's width, and to 80 columns when it isn't writing to one.
+    let output = Command::new(root.join("bin/rails"))
+        .arg("--help")
+        .env("THOR_COLUMNS", "10000")
+        .current_dir(root)
+        .output()
+        .context("couldn't run bin/rails")?;
     let tasks: Vec<(String, String)> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|line| {
             let (name, about) = line.trim().split_once(char::is_whitespace).unwrap_or((line.trim(), ""));
-            name.strip_prefix("nibble:").map(|name| (name.to_string(), about.trim().trim_end_matches("...").trim().to_string()))
+            name.strip_prefix("nibble:").map(|name| (name.to_string(), about.trim().to_string()))
         })
         .collect();
     if tasks.is_empty() {

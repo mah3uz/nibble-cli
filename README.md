@@ -91,7 +91,8 @@ Tab then completes, with a description beside each choice where the shell shows 
 Pressing Tab never contacts the site, reads the keychain, or runs anything in the folder you're in. It reads what
 `nibble remote` last learned from the site and saved beside your settings; signing in saves the first. After changing
 a site's schema, `nibble remote describe-site` brings completion up to date; otherwise it catches up within the hour.
-A site's tasks are learned the first time you run one, or `nibble doctor`, there.
+A site's tasks are learned when `nibble new` makes it, and otherwise the first time you run one, or `nibble doctor`,
+there.
 
 
 

@@ -85,3 +85,26 @@ fn nibble_new_downloads_from_the_repository_nibble_names() {
     let ours = std::fs::read_to_string("src/new.rs").unwrap();
     assert!(ours.contains(&format!("pub const NIBBLE_REPOSITORY: &str = \"{named}\";")), "Nibble says {named}");
 }
+
+// Completion shows what the CLI read from bin/rails, which cuts descriptions short unless told the terminal is wide.
+#[test]
+fn a_sites_tasks_complete_with_their_whole_descriptions() {
+    let Ok(checkout) = std::env::var("NIBBLE_CONTRACT_CHECKOUT") else {
+        eprintln!("skipped: run script/contract to read a Nibble checkout's tasks");
+        return;
+    };
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_nibble"))
+            .args(args)
+            .current_dir(&checkout)
+            .env("NIBBLE_CONFIG_DIR", std::env::temp_dir().join("nibble-contract-config"))
+            .output()
+            .expect("the nibble binary runs")
+    };
+    let _ = std::fs::remove_file(format!("{checkout}/tmp/nibble-cli-tasks.txt"));
+    run(&["doctor"]);
+    let offered = String::from_utf8_lossy(&run(&["__complete", "--current=", "--", "nibble"]).stdout).to_string();
+    let descriptions: Vec<&str> = offered.lines().skip(1).filter_map(|line| line.split_once('\t').map(|(_, about)| about)).collect();
+    assert!(descriptions.iter().all(|about| !about.ends_with("...")), "{offered}");
+    assert!(descriptions.iter().any(|about| about.len() > 80), "a description longer than a narrow terminal: {offered}");
+}

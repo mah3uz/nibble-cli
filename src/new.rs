@@ -165,17 +165,23 @@ pub fn run(name: Option<String>, version: Option<String>, install_args: &[String
     let _ = fs::remove_dir_all(&work);
     result?;
 
-    let mut install = Command::new("ruby");
-    install.arg("vendor/nibble/bin/install").args(install_args).current_dir(&dir);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        Err(install.exec()).context("couldn't start the installer")
+    let status = Command::new("ruby")
+        .arg("vendor/nibble/bin/install")
+        .args(install_args)
+        .current_dir(&dir)
+        .status()
+        .context("couldn't start the installer")?;
+    if !status.success() {
+        return Ok(status.code().unwrap_or(1));
     }
-    #[cfg(not(unix))]
-    {
-        Ok(install.status()?.code().unwrap_or(1))
+    // Completion only reads tasks an earlier run listed, and this site's code is ours, so learn them now.
+    if let Ok(root) = fs::canonicalize(&dir) {
+        let _ = crate::project::tasks(&root);
     }
+    if let Some(hint) = crate::complete::setup_hint() {
+        anstream::eprintln!("  {hint}");
+    }
+    Ok(0)
 }
 
 fn fetch_and_unpack(work: &Path, dir: &Path, version: Option<String>) -> Result<()> {

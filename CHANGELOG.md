@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A new site's tasks complete straight away:** `nibble new` learns them once the install finishes, where they used
+  to appear only after the first task had run.
+- **Tasks complete with their whole descriptions,** no longer cut off at 80 columns.
+- **`nibble new` says how to turn on Tab completion** when no shell loads it yet.
+
 ## 0.1.1 - 2026-09-28
 
 - **Builds for macOS,** on Apple Silicon and Intel, installed by the same script as on Linux.

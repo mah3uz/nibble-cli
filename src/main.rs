@@ -182,6 +182,9 @@ fn run(cli: Cli, output: Output) -> Result<i32> {
                 paint(HEADING, "In a site"),
                 paint(STRONG, root.display())
             );
+            if project::cached_tasks(&root).is_empty() {
+                anstream::println!("Tab completes them once one has run here, or `nibble doctor`.");
+            }
         }
         return Ok(0);
     };

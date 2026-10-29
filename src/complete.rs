@@ -24,6 +24,29 @@ pub fn script(shell: Shell) -> &'static str {
     }
 }
 
+pub fn setup_hint() -> Option<String> {
+    let home = dirs::home_dir()?;
+    let config = std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| home.join(".config"), PathBuf::from);
+    let zdotdir = std::env::var_os("ZDOTDIR").map_or_else(|| home.clone(), PathBuf::from);
+    let shell = std::env::var("SHELL").unwrap_or_default();
+    hint_for(&shell, &config.join("fish/completions/nibble.fish"), &[home.join(".bashrc"), zdotdir.join(".zshrc")])
+}
+
+// Set up in any shell counts, since people often work in a shell other than their login one.
+fn hint_for(shell: &str, fish_file: &Path, startup_files: &[PathBuf]) -> Option<String> {
+    let loads = |file: &PathBuf| fs::read_to_string(file).is_ok_and(|text| text.contains("nibble completion"));
+    if fish_file.is_file() || startup_files.iter().any(loads) {
+        return None;
+    }
+    let step = match shell.rsplit('/').next()? {
+        "fish" => "run `nibble completion fish > ~/.config/fish/completions/nibble.fish`",
+        "zsh" => "add `eval \"$(nibble completion zsh)\"` to ~/.zshrc, after compinit",
+        "bash" => "add `eval \"$(nibble completion bash)\"` to ~/.bashrc",
+        _ => return None,
+    };
+    Some(format!("For Tab completion, {step}, then open a new terminal."))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Fallback {
     None,
@@ -732,5 +755,26 @@ mod tests {
             completion.render(None, current).contains("--site=tidewater.example:bo@tidewater.example\t"),
             "other shells get whole words"
         );
+    }
+
+    #[test]
+    fn completion_set_up_in_any_shell_is_left_alone_and_otherwise_the_login_shell_is_told_how() {
+        let dir = std::env::temp_dir().join(format!("nibble-setup-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let (fish, zshrc) = (dir.join("nibble.fish"), dir.join(".zshrc"));
+        fs::write(&zshrc, "autoload -U compinit && compinit\n").unwrap();
+        let rcs = [zshrc.clone()];
+
+        let hint = hint_for("/usr/bin/zsh", &fish, &rcs).expect("nothing loads it yet");
+        assert!(hint.contains(r#"eval "$(nibble completion zsh)""#) && hint.contains("~/.zshrc"), "{hint}");
+        assert!(hint_for("/usr/bin/fish", &fish, &rcs).unwrap().contains("completions/nibble.fish"));
+        assert_eq!(hint_for("", &fish, &rcs), None, "no guessing when the shell is unknown");
+
+        fs::write(&fish, script(Shell::Fish)).unwrap();
+        assert_eq!(hint_for("/usr/bin/zsh", &fish, &rcs), None, "a zsh login shell running fish already completes");
+        fs::remove_file(&fish).unwrap();
+        fs::write(&zshrc, "eval \"$(nibble completion zsh)\"\n").unwrap();
+        assert_eq!(hint_for("/bin/bash", &fish, &rcs), None);
+        let _ = fs::remove_dir_all(dir);
     }
 }
