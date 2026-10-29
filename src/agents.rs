@@ -56,10 +56,14 @@ pub fn mcp_file(client: &str, root: &Path) -> Option<PathBuf> {
 
 pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String>, project: &Path) -> Result<Added> {
     let url = format!("{issuer}/mcp");
-    let name = name.unwrap_or_else(|| server_name(origin));
+    let wanted = name.unwrap_or_else(|| server_name(origin));
     let root = project;
     match client {
         "claude-code" => {
+            let name = free_name(&wanted, &url, |key| {
+                let config: Value = serde_json::from_str(&fs::read_to_string(project.join(".mcp.json")).ok()?).ok()?;
+                config["mcpServers"].get(key).map(|entry| entry["url"].as_str().map(str::to_string))
+            });
             let args = claude_args("add", &name, &url, true);
             if which("claude") {
                 let mut command = Command::new("claude");
@@ -68,7 +72,7 @@ pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String
                 if !command.status()?.success() {
                     bail!("`claude {}` failed", args.join(" "));
                 }
-                Ok(Added::new(format!("Added {name} to Claude Code"), "In Claude Code, run /mcp to sign in"))
+                Ok(Added::new(added(&wanted, &name, "Claude Code"), "In Claude Code, run /mcp to sign in"))
             } else {
                 Ok(Added::new("Claude Code isn't on this computer's PATH", format!("Once it is, run: claude {}", args.join(" "))))
             }
@@ -78,13 +82,16 @@ pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String
             let mut table: toml::Table = if path.exists() { fs::read_to_string(&path)?.parse()? } else { toml::Table::new() };
             let servers = table.entry("mcp_servers").or_insert_with(|| toml::Value::Table(toml::Table::new()));
             let servers = servers.as_table_mut().context("mcp_servers in Codex's config isn't a table")?;
+            let name = free_name(&wanted, &url, |key| {
+                servers.get(key).map(|entry| entry.get("url").and_then(toml::Value::as_str).map(str::to_string))
+            });
             let mut server = toml::Table::new();
             server.insert("url".into(), toml::Value::String(url.clone()));
             servers.insert(name.clone(), toml::Value::Table(server));
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, toml::to_string_pretty(&table)?)?;
             Ok(Added::new(
-                format!("Added {name} to {}", path.display()),
+                added(&wanted, &name, &path.display().to_string()),
                 format!("Now run: codex mcp login {name}. Codex reads a project's config only once you trust the project"),
             ))
         }
@@ -94,10 +101,11 @@ pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String
             if !config["mcpServers"].is_object() {
                 config["mcpServers"] = json!({});
             }
+            let name = free_name(&wanted, &url, |key| config["mcpServers"].get(key).map(|entry| entry["url"].as_str().map(str::to_string)));
             config["mcpServers"][&name] = json!({ "url": url });
             fs::create_dir_all(path.parent().unwrap())?;
             fs::write(&path, serde_json::to_string_pretty(&config)?)?;
-            Ok(Added::new(format!("Added {name} to {}", path.display()), "Cursor asks you to sign in the first time it's used"))
+            Ok(Added::new(added(&wanted, &name, &path.display().to_string()), "Cursor asks you to sign in the first time it's used"))
         }
         "claude" | "claude-desktop" | "chatgpt" => Ok(Added::new(
             format!("{} can't be set up from here", if client == "chatgpt" { "ChatGPT" } else { "Claude" }),
@@ -106,6 +114,27 @@ pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String
             ),
         )),
         other => bail!("unknown client {other}; use claude-code, codex, cursor, claude or chatgpt"),
+    }
+}
+
+// Entries are free if absent, or ours by address; `lookup` gives the entry's url when the name is taken.
+fn free_name(wanted: &str, url: &str, lookup: impl Fn(&str) -> Option<Option<String>>) -> String {
+    let ours = |key: &str| lookup(key).is_none_or(|entry| entry.as_deref() == Some(url));
+    if ours(wanted) {
+        return wanted.to_string();
+    }
+    let first = format!("{wanted}-site");
+    if ours(&first) {
+        return first;
+    }
+    (2..).map(|n| format!("{first}-{n}")).find(|key| ours(key)).unwrap()
+}
+
+fn added(wanted: &str, name: &str, place: &str) -> String {
+    if wanted == name {
+        format!("Added {name} to {place}")
+    } else {
+        format!("Added {name} to {place}, because {wanted} is another server's")
     }
 }
 
@@ -308,7 +337,7 @@ pub fn install_skill(session: &mut Session, dir: &Path) -> Result<(PathBuf, bool
     let data = &guide["data"];
     let name = data["name"].as_str().context("the site's guide has no name")?;
     let fingerprint = data["fingerprint"].as_str().unwrap_or_default();
-    let folder = dir.join(name);
+    let folder = skill_folder(dir, name, &session.origin);
     let marker = folder.join(MARKER);
     let previous: Option<Value> = fs::read_to_string(&marker).ok().and_then(|text| serde_json::from_str(&text).ok());
     if previous.as_ref().and_then(|value| value["fingerprint"].as_str()) == Some(fingerprint) {
@@ -329,6 +358,22 @@ pub fn install_skill(session: &mut Session, dir: &Path) -> Result<(PathBuf, bool
     fs::write(folder.join("SKILL.md"), skill)?;
     fs::write(&marker, json!({ "origin": session.origin, "fingerprint": fingerprint }).to_string())?;
     Ok((folder, true))
+}
+
+fn skill_folder(dir: &Path, name: &str, origin: &str) -> PathBuf {
+    let ours = |folder: &Path| {
+        let linked = fs::symlink_metadata(folder).is_ok_and(|meta| meta.file_type().is_symlink());
+        !linked && (!folder.exists() || marker_origin(folder).as_deref() == Some(origin))
+    };
+    let first = dir.join(name);
+    if ours(&first) {
+        return first;
+    }
+    let site = dir.join(format!("{name}-site"));
+    if ours(&site) {
+        return site;
+    }
+    (2..).map(|n| dir.join(format!("{name}-site-{n}"))).find(|folder| ours(folder)).unwrap()
 }
 
 fn marker_origin(folder: &Path) -> Option<String> {
@@ -633,5 +678,61 @@ mod tests {
         let dir = skills_dir(Some("claude"), None, &project).unwrap();
         assert_eq!(dir, project.join(".claude/skills"));
         assert_eq!(skills_dir(Some("codex"), None, &project).unwrap(), project.join(".codex/skills"));
+    }
+
+    #[test]
+    fn a_skill_never_goes_through_a_link_or_into_a_folder_it_didnt_write() {
+        let dir = scratch("skills");
+        let elsewhere = scratch("skills-elsewhere");
+        std::os::unix::fs::symlink(&elsewhere, dir.join("nibble-theming")).unwrap();
+        assert_eq!(skill_folder(&dir, "nibble-theming", "https://a.example"), dir.join("nibble-theming-site"));
+
+        fs::create_dir_all(dir.join("nibble-schema")).unwrap();
+        fs::write(dir.join("nibble-schema/SKILL.md"), "mine").unwrap();
+        fs::create_dir_all(dir.join("nibble-schema-site")).unwrap();
+        fs::write(dir.join("nibble-schema-site").join(MARKER), json!({ "origin": "https://other.example" }).to_string()).unwrap();
+        assert_eq!(skill_folder(&dir, "nibble-schema", "https://a.example"), dir.join("nibble-schema-site-2"));
+        assert_eq!(fs::read_to_string(dir.join("nibble-schema/SKILL.md")).unwrap(), "mine");
+        assert!(fs::read_dir(&elsewhere).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn a_skill_folder_with_this_sites_marker_is_reused() {
+        let dir = scratch("skills-own");
+        assert_eq!(skill_folder(&dir, "nibble-a", "https://a.example"), dir.join("nibble-a"));
+        fs::create_dir_all(dir.join("nibble-a")).unwrap();
+        fs::write(dir.join("nibble-a").join(MARKER), json!({ "origin": "https://a.example" }).to_string()).unwrap();
+        assert_eq!(skill_folder(&dir, "nibble-a", "https://a.example"), dir.join("nibble-a"));
+        assert_eq!(skill_folder(&dir, "nibble-a", "https://b.example"), dir.join("nibble-a-site"));
+    }
+
+    #[test]
+    fn a_servers_entry_that_isnt_this_sites_is_kept() {
+        let root = scratch("taken");
+        fs::create_dir_all(root.join(".cursor")).unwrap();
+        fs::create_dir_all(root.join(".codex")).unwrap();
+        fs::write(root.join(".cursor/mcp.json"), json!({ "mcpServers": { "nibble-dev": { "command": "bin/dev-mcp" } } }).to_string())
+            .unwrap();
+        fs::write(root.join(".codex/config.toml"), "[mcp_servers.nibble-dev]\ncommand = \"bin/dev-mcp\"\n").unwrap();
+        fs::write(root.join(".mcp.json"), json!({ "mcpServers": { "nibble-dev": { "command": "bin/dev-mcp" } } }).to_string()).unwrap();
+        for _ in 0..2 {
+            install_mcp("cursor", "https://dev", "https://dev", None, &root).unwrap();
+            install_mcp("codex", "https://dev", "https://dev", None, &root).unwrap();
+        }
+        let cursor: Value = serde_json::from_str(&fs::read_to_string(root.join(".cursor/mcp.json")).unwrap()).unwrap();
+        assert_eq!(cursor["mcpServers"]["nibble-dev"]["command"], "bin/dev-mcp");
+        assert_eq!(cursor["mcpServers"]["nibble-dev-site"]["url"], "https://dev/mcp");
+        assert_eq!(cursor["mcpServers"].as_object().unwrap().len(), 2, "connecting again updates the site's own entry");
+        let codex: toml::Table = fs::read_to_string(root.join(".codex/config.toml")).unwrap().parse().unwrap();
+        assert_eq!(codex["mcp_servers"]["nibble-dev"]["command"].as_str(), Some("bin/dev-mcp"));
+        assert_eq!(codex["mcp_servers"]["nibble-dev-site"]["url"].as_str(), Some("https://dev/mcp"));
+
+        let claude = |name: &str| {
+            free_name(name, "https://dev/mcp", |key| {
+                let config: Value = serde_json::from_str(&fs::read_to_string(root.join(".mcp.json")).ok()?).ok()?;
+                config["mcpServers"].get(key).map(|entry| entry["url"].as_str().map(str::to_string))
+            })
+        };
+        assert_eq!(claude("nibble-dev"), "nibble-dev-site");
     }
 }

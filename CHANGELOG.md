@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`nibble connect` never overwrites a skill or server it didn't write:** when the skill's folder is a link, or holds
+  something that isn't this site's skill, the skill goes into `<name>-site` instead; when a server's name belongs to
+  another entry in `.mcp.json`, `.cursor/mcp.json` or `.codex/config.toml`, the site is added as `<name>-site`. It says
+  so, and connecting again updates the same one.
+
 ## 0.3.3 - 2026-10-30
 
 - **`nibble disconnect` leaves no empty files behind:** when the site's server was the only one in `.mcp.json`,
