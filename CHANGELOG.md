@@ -2,9 +2,12 @@
 
 ## Unreleased
 
-- **`nibble connect [site]` and `nibble disconnect [site]`:** connect every AI app found (Claude Code, Codex, Cursor)
-  to a site in one step, signing in first if needed, and undo it. `--client` chooses apps and `--project` connects the
-  folder you're in instead of you. `nibble auth login` now prints `nibble connect <site>` where it can't ask.
+- **`nibble connect [site]` and `nibble disconnect [site]`:** connect the AI apps found (Claude Code, Codex, Cursor) to
+  a site in one step, signing in first if needed, and undo it. A site's MCP server and skill install into the current
+  project only, since its tools and guide matter only where you work on that site; a folder that is another Nibble
+  site's project is refused. `--client` chooses apps. `disconnect` also removes the user-wide entries older versions
+  wrote. `nibble mcp install` and `nibble skill install` follow the same rule, and `skill sync` looks in the current
+  project. `nibble auth login` now prints `nibble connect <site>` where it can't ask.
 
 ## 0.2.0 - 2026-10-29
 
