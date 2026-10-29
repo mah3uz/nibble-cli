@@ -145,7 +145,24 @@ pub fn install_skill(session: &mut Session, dir: &Path) -> Result<(PathBuf, bool
     fs::create_dir_all(&folder)?;
     fs::write(folder.join("SKILL.md"), skill)?;
     fs::write(&marker, json!({ "origin": session.origin, "fingerprint": fingerprint }).to_string())?;
+    remove_renamed(dir, &session.origin, &folder);
     Ok((folder, true))
+}
+
+fn marker_origin(folder: &Path) -> Option<String> {
+    let text = fs::read_to_string(folder.join(MARKER)).ok()?;
+    serde_json::from_str::<Value>(&text).ok()?["origin"].as_str().map(str::to_string)
+}
+
+// A site that changes its skill's name would otherwise leave its old folder behind, loaded beside the new one.
+fn remove_renamed(dir: &Path, origin: &str, keep: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path != keep && marker_origin(&path).as_deref() == Some(origin) {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
 }
 
 pub fn installed_skills() -> Vec<(PathBuf, String)> {
@@ -154,12 +171,7 @@ pub fn installed_skills() -> Vec<(PathBuf, String)> {
         let Ok(home) = home() else { continue };
         let Ok(entries) = fs::read_dir(home.join(base)) else { continue };
         for entry in entries.flatten() {
-            let marker = entry.path().join(MARKER);
-            if let Some(origin) = fs::read_to_string(&marker)
-                .ok()
-                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-                .and_then(|value| value["origin"].as_str().map(str::to_string))
-            {
+            if let Some(origin) = marker_origin(&entry.path()) {
                 found.push((entry.path(), origin));
             }
         }
@@ -189,6 +201,25 @@ mod tests {
         tool(&bin, "codex");
         assert_eq!(detect_clients(std::slice::from_ref(&bin), &home), ["claude-code", "codex"]);
         assert_eq!(detect_clients(&[scratch("empty")], &home), Vec::<&str>::new(), "nothing installed offers nothing");
+    }
+
+    #[test]
+    fn a_renamed_skill_replaces_the_old_folder_for_the_same_site_only() {
+        let dir = scratch("renamed");
+        for (name, origin) in
+            [("nibble-nibble", "https://nibble.ink"), ("nibble", "https://nibble.ink"), ("nibble-tidewater", "https://tidewater.example")]
+        {
+            fs::create_dir_all(dir.join(name)).unwrap();
+            fs::write(dir.join(name).join(MARKER), json!({ "origin": origin }).to_string()).unwrap();
+        }
+        fs::create_dir_all(dir.join("someone-elses")).unwrap();
+
+        remove_renamed(&dir, "https://nibble.ink", &dir.join("nibble"));
+
+        assert!(!dir.join("nibble-nibble").exists(), "the old name for the same site goes");
+        assert!(dir.join("nibble").exists());
+        assert!(dir.join("nibble-tidewater").exists(), "another site's skill stays");
+        assert!(dir.join("someone-elses").exists(), "a skill Nibble didn't install stays");
     }
 
     #[test]
