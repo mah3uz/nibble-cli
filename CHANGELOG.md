@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-10-30
+
 - **`nibble connect` asks which apps to set up:** on a terminal it lists Claude Code, Codex, Cursor, Claude and ChatGPT,
   marks those found on this computer and offers those as the default, instead of setting up every app found. `--client`
   still sets up exactly the apps named without asking, and without a terminal or `--client` it writes nothing and
