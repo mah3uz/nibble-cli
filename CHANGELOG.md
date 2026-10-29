@@ -8,6 +8,9 @@
   site's project is refused. `--client` chooses apps. `disconnect` also removes the user-wide entries older versions
   wrote. `nibble mcp install` and `nibble skill install` follow the same rule, and `skill sync` looks in the current
   project. `nibble auth login` now prints `nibble connect <site>` where it can't ask.
+- **If you connected an app with 0.2.0,** its MCP server and skill were installed for your whole account, so they load
+  in every project and `skill sync` no longer refreshes them. Run `nibble disconnect <site>` once to remove them, then
+  `nibble connect <site>` in the folder where you work on that site.
 
 ## 0.2.0 - 2026-10-29
 
