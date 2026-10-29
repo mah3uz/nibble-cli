@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.2 - 2026-10-29
+
 - **A new site's tasks complete straight away:** `nibble new` learns them once the install finishes, where they used
   to appear only after the first task had run.
 - **Tasks complete with their whole descriptions,** no longer cut off at 80 columns.
