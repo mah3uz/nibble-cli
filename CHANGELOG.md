@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-10-30
+
 - **`nibble connect [site]` and `nibble disconnect [site]`:** connect the AI apps found (Claude Code, Codex, Cursor) to
   a site in one step, signing in first if needed, and undo it. A site's MCP server and skill install into the current
   project only, since its tools and guide matter only where you work on that site; a folder that is another Nibble
