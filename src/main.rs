@@ -167,7 +167,7 @@ fn main() {
         Ok(code) => code,
         Err(error) => {
             output.failure(&error);
-            1
+            remote::exit_code(&error)
         }
     };
     std::process::exit(code);
@@ -197,7 +197,6 @@ fn run(cli: Cli, output: Output) -> Result<i32> {
             let output = if globals.json { Output::new(true) } else { output };
             let mut session = session(globals.site.or(cli.site))?;
             remote::run(&mut session, remote::parse(words), output, globals.pick.as_deref().or(cli.pick.as_deref()), globals.no_wait)
-                .map(|_| 0)
         }
         Command::Mcp { command } => {
             let session = session(cli.site)?;

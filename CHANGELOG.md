@@ -5,7 +5,8 @@
 - **Upload a file from your computer:** `nibble remote upload-asset --file photo.jpg` streams it to the site and makes
   the asset from it; Tab completes the path.
 - **Approvals are waited for:** when a change needs the person's approval, nibble prints their link and waits until
-  it's made, then prints the result. `--no-wait` returns at once with the link, and `--json` or a pipe never waits.
+  it's made, then prints the result. `--no-wait` returns at once with the link, and `--json` or a pipe never waits;
+  a request left waiting exits with status 2, so a script doesn't take it for done or failed.
 - **`nibble remote` lists what this connection can't do,** with the access each needs, and says so when you call one,
   where it used to say there was no such operation.
 - **`nibble auth login` offers to connect AI apps:** Claude Code, Codex or Cursor, if installed, are connected over MCP

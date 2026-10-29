@@ -52,6 +52,7 @@ What this connection can't do is listed after the rest, with the access it needs
   while they approve it in the Control Plane, then prints the result as usual. Ctrl-C stops waiting and leaves the
   request open (`nibble remote get-approval --approval <id>` checks on it later); `--no-wait` prints the link and
   returns at once. With `--json` or a pipe it never waits and answers with the `approval_required` error and its link.
+  A request left waiting exits with status 2, apart from a failure's 1, so a script can tell the two apart.
 
 - **More than one site or account:** `nibble auth list`, `nibble auth switch example.com:you@example.com`, or
   `--site` on any command.

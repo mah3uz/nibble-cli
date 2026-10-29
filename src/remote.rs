@@ -123,8 +123,11 @@ pub fn describe(operation: &Value) {
     anstream::println!("\n{}", paint(DIM, "Objects and arrays take JSON, @file.json, or - for standard input."));
 }
 
-pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: Option<&str>, no_wait: bool) -> Result<()> {
-    let Some(name) = invocation.operation else { return list(session, output) };
+// A change waiting for its person, which scripts must tell apart from one that failed.
+pub const AWAITING_APPROVAL: i32 = 2;
+
+pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: Option<&str>, no_wait: bool) -> Result<i32> {
+    let Some(name) = invocation.operation else { return list(session, output).map(|_| 0) };
     let catalogue = session.catalogue()?;
     crate::complete::remember(session, &catalogue);
     let Some(operation) = operations(&catalogue).iter().find(|operation| operation["name"] == json!(name)).cloned() else {
@@ -135,7 +138,7 @@ pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: 
     };
     if invocation.help {
         describe(&operation);
-        return Ok(());
+        return Ok(0);
     }
 
     let (words, file) = split_file(&invocation.input)?;
@@ -178,7 +181,7 @@ pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: 
                             )
                         )
                     );
-                    return Ok(());
+                    return Ok(AWAITING_APPROVAL);
                 }
                 json!({ "data": wait_for(session, &approval)? })
             }
@@ -189,7 +192,7 @@ pub fn run(session: &mut Session, invocation: Invocation, output: Output, pick: 
         crate::complete::remember_site(&session.key(), &response["data"]);
     }
     output.success(&response["data"], Some(&session.origin), pick);
-    Ok(())
+    Ok(0)
 }
 
 pub fn unavailable_message(catalogue: &Value, name: &str, site: &str) -> Option<String> {
@@ -244,6 +247,10 @@ pub fn upload_plan(operation: &str, file: &str, input: &Map<String, Value>) -> R
 pub struct Approval {
     pub id: String,
     pub url: String,
+}
+
+pub fn exit_code(error: &anyhow::Error) -> i32 {
+    if approval_of(error).is_some() { AWAITING_APPROVAL } else { 1 }
 }
 
 pub fn approval_of(error: &anyhow::Error) -> Option<Approval> {
@@ -475,5 +482,21 @@ mod tests {
         let other = Problem::from_body(409, &json!({ "code": "approval_pending", "detail": "not yet" }));
         assert!(approval_of(&other.into()).is_none());
         assert!(approval_of(&anyhow::anyhow!("plain")).is_none());
+    }
+
+    #[test]
+    fn a_change_waiting_for_approval_exits_apart_from_a_failure() {
+        let waiting = anyhow::Error::from(Problem {
+            status: 409,
+            code: "approval_required".into(),
+            detail: "Ada has to approve this".into(),
+            hint: None,
+            details: Some(json!({ "approval": "appr_1", "approval_url": "https://example.com/cp/approvals/appr_1" })),
+        });
+        let refused =
+            anyhow::Error::from(Problem { status: 403, code: "forbidden".into(), detail: "no".into(), hint: None, details: None });
+        assert_eq!(exit_code(&waiting), AWAITING_APPROVAL, "a script must not take an open request for a failed one, or a done one");
+        assert_ne!(AWAITING_APPROVAL, 0);
+        assert_eq!(exit_code(&refused), 1);
     }
 }
