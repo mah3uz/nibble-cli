@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.4 - 2026-10-30
+
 - **`nibble connect` never overwrites a skill or server it didn't write:** when the skill's folder is a link, or holds
   something that isn't this site's skill, the skill goes into `<name>-site` instead; when a server's name belongs to
   another entry in `.mcp.json`, `.cursor/mcp.json` or `.codex/config.toml`, the site is added as `<name>-site`. It says
