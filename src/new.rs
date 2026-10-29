@@ -165,9 +165,11 @@ pub fn run(name: Option<String>, version: Option<String>, install_args: &[String
     let _ = fs::remove_dir_all(&work);
     result?;
 
+    // A new site has only the themes Nibble ships, so a theme the shell names for another site would break its build.
     let status = Command::new("ruby")
         .arg("vendor/nibble/bin/install")
         .args(install_args)
+        .env_remove("NIBBLE_THEME")
         .current_dir(&dir)
         .status()
         .context("couldn't start the installer")?;
