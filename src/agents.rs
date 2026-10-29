@@ -300,8 +300,16 @@ fn site_hosts(folder: &Path) -> Vec<String> {
     text.lines()
         .filter_map(|line| line.strip_prefix("  url:"))
         .map(|value| host(value.trim().trim_matches(|c| c == '"' || c == '\'')))
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty() && !local_host(value))
         .collect()
+}
+
+fn local_host(host: &str) -> bool {
+    let name = host.rsplit_once(':').map_or(host, |(name, _)| name);
+    name == "localhost"
+        || name.starts_with("127.")
+        || name == "[::1]"
+        || [".localhost", ".test", ".local"].iter().any(|end| name.ends_with(end))
 }
 
 pub fn guard_project(start: &Path, origin: &str) -> Result<()> {
@@ -316,10 +324,7 @@ pub fn guard_project(start: &Path, origin: &str) -> Result<()> {
             "{} is the project for {own}; connect {target} from its own folder or a folder that isn't a Nibble site",
             folder.display()
         ),
-        None => bail!(
-            "{} is a Nibble site whose address isn't in config/nibble.yml; connect {target} from its own folder or a folder that isn't a Nibble site",
-            folder.display()
-        ),
+        None => Ok(()),
     }
 }
 
@@ -468,10 +473,16 @@ mod tests {
     }
 
     #[test]
-    fn a_site_folder_without_an_address_is_refused() {
-        let project = site("guard-none", "");
-        fs::write(project.join("config/nibble.yml"), "default: &default\n  theme: crumbs\n").unwrap();
-        assert!(guard_project(&project, "https://a.example").unwrap_err().to_string().contains("isn't in config/nibble.yml"));
+    fn a_site_folder_naming_only_local_addresses_takes_any_site() {
+        let project = site("guard-local", "http://localhost:3100");
+        assert!(guard_project(&project, "https://nibble.ink").is_ok(), "a local address doesn't say which site this is");
+        fs::write(
+            project.join("config/nibble.yml"),
+            "default: &default\n  url: http://localhost:3100\nproduction:\n  url: https://a.example\n",
+        )
+        .unwrap();
+        assert!(guard_project(&project, "https://nibble.ink").is_err(), "a real address does");
+        assert!(guard_project(&project, "https://a.example").is_ok());
     }
 
     #[test]
