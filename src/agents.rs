@@ -53,22 +53,17 @@ pub fn mcp_file(client: &str, root: &Path) -> Option<PathBuf> {
     }
 }
 
-pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String>, project: Option<&Path>) -> Result<Added> {
+pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String>, project: &Path) -> Result<Added> {
     let url = format!("{issuer}/mcp");
     let name = name.unwrap_or_else(|| server_name(origin));
-    let root = match project {
-        Some(dir) => dir.to_path_buf(),
-        None => home()?,
-    };
+    let root = project;
     match client {
         "claude-code" => {
-            let args = claude_args("add", &name, &url, project.is_some());
+            let args = claude_args("add", &name, &url, true);
             if which("claude") {
                 let mut command = Command::new("claude");
                 command.args(&args);
-                if let Some(dir) = project {
-                    command.current_dir(dir);
-                }
+                command.current_dir(project);
                 if !command.status()?.success() {
                     bail!("`claude {}` failed", args.join(" "));
                 }
@@ -78,7 +73,7 @@ pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String
             }
         }
         "codex" => {
-            let path = mcp_file(client, &root).unwrap();
+            let path = mcp_file(client, root).unwrap();
             let mut table: toml::Table = if path.exists() { fs::read_to_string(&path)?.parse()? } else { toml::Table::new() };
             let servers = table.entry("mcp_servers").or_insert_with(|| toml::Value::Table(toml::Table::new()));
             let servers = servers.as_table_mut().context("mcp_servers in Codex's config isn't a table")?;
@@ -89,14 +84,11 @@ pub fn install_mcp(client: &str, origin: &str, issuer: &str, name: Option<String
             fs::write(&path, toml::to_string_pretty(&table)?)?;
             Ok(Added::new(
                 format!("Added {name} to {}", path.display()),
-                format!(
-                    "Now run: codex mcp login {name}{}",
-                    if project.is_some() { ". Codex reads a project's config once you trust the project" } else { "" }
-                ),
+                format!("Now run: codex mcp login {name}. Codex reads a project's config only once you trust the project"),
             ))
         }
         "cursor" => {
-            let path = mcp_file(client, &root).unwrap();
+            let path = mcp_file(client, root).unwrap();
             let mut config: Value = if path.exists() { serde_json::from_str(&fs::read_to_string(&path)?)? } else { json!({}) };
             if !config["mcpServers"].is_object() {
                 config["mcpServers"] = json!({});
@@ -243,11 +235,11 @@ pub fn skill_client(client: &str) -> Option<&'static str> {
     }
 }
 
-pub fn skills_dir(client: Option<&str>, dir: Option<PathBuf>) -> Result<PathBuf> {
+pub fn skills_dir(client: Option<&str>, dir: Option<PathBuf>, project: &Path) -> Result<PathBuf> {
     match (client, dir) {
         (_, Some(dir)) => Ok(dir),
-        (Some("claude") | Some("claude-code"), None) => Ok(skills_in("claude", &home()?)),
-        (Some("codex"), None) => Ok(skills_in("codex", &home()?)),
+        (Some("claude") | Some("claude-code"), None) => Ok(skills_in("claude", project)),
+        (Some("codex"), None) => Ok(skills_in("codex", project)),
         (Some(other), None) => bail!("unknown client {other}; use claude or codex, or --dir"),
         (None, None) => bail!("say where: --client claude, --client codex, or --dir PATH"),
     }
@@ -278,7 +270,6 @@ pub fn install_skill(session: &mut Session, dir: &Path) -> Result<(PathBuf, bool
     fs::create_dir_all(&folder)?;
     fs::write(folder.join("SKILL.md"), skill)?;
     fs::write(&marker, json!({ "origin": session.origin, "fingerprint": fingerprint }).to_string())?;
-    remove_renamed(dir, &session.origin, &folder);
     Ok((folder, true))
 }
 
@@ -287,22 +278,10 @@ fn marker_origin(folder: &Path) -> Option<String> {
     serde_json::from_str::<Value>(&text).ok()?["origin"].as_str().map(str::to_string)
 }
 
-// A site that changes its skill's name would otherwise leave its old folder behind, loaded beside the new one.
-fn remove_renamed(dir: &Path, origin: &str, keep: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path != keep && marker_origin(&path).as_deref() == Some(origin) {
-            let _ = fs::remove_dir_all(&path);
-        }
-    }
-}
-
-pub fn installed_skills() -> Vec<(PathBuf, String)> {
+pub fn installed_skills(project: &Path) -> Vec<(PathBuf, String)> {
     let mut found = Vec::new();
     for base in [".claude/skills", ".codex/skills"] {
-        let Ok(home) = home() else { continue };
-        let Ok(entries) = fs::read_dir(home.join(base)) else { continue };
+        let Ok(entries) = fs::read_dir(project.join(base)) else { continue };
         for entry in entries.flatten() {
             if let Some(origin) = marker_origin(&entry.path()) {
                 found.push((entry.path(), origin));
@@ -310,6 +289,38 @@ pub fn installed_skills() -> Vec<(PathBuf, String)> {
         }
     }
     found
+}
+
+fn site_folder(start: &Path) -> Option<&Path> {
+    start.ancestors().find(|dir| dir.join("config/nibble.yml").is_file() && dir.join("vendor/nibble").is_dir())
+}
+
+fn site_hosts(folder: &Path) -> Vec<String> {
+    let text = fs::read_to_string(folder.join("config/nibble.yml")).unwrap_or_default();
+    text.lines()
+        .filter_map(|line| line.strip_prefix("  url:"))
+        .map(|value| host(value.trim().trim_matches(|c| c == '"' || c == '\'')))
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+pub fn guard_project(start: &Path, origin: &str) -> Result<()> {
+    let Some(folder) = site_folder(start) else { return Ok(()) };
+    let target = host(origin);
+    let hosts = site_hosts(folder);
+    if hosts.contains(&target) {
+        return Ok(());
+    }
+    match hosts.first() {
+        Some(own) => bail!(
+            "{} is the project for {own}; connect {target} from its own folder or a folder that isn't a Nibble site",
+            folder.display()
+        ),
+        None => bail!(
+            "{} is a Nibble site whose address isn't in config/nibble.yml; connect {target} from its own folder or a folder that isn't a Nibble site",
+            folder.display()
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -334,25 +345,6 @@ mod tests {
         tool(&bin, "codex");
         assert_eq!(detect_clients(std::slice::from_ref(&bin), &home), ["claude-code", "codex"]);
         assert_eq!(detect_clients(&[scratch("empty")], &home), Vec::<&str>::new(), "nothing installed offers nothing");
-    }
-
-    #[test]
-    fn a_renamed_skill_replaces_the_old_folder_for_the_same_site_only() {
-        let dir = scratch("renamed");
-        for (name, origin) in
-            [("nibble-nibble", "https://nibble.ink"), ("nibble", "https://nibble.ink"), ("nibble-tidewater", "https://tidewater.example")]
-        {
-            fs::create_dir_all(dir.join(name)).unwrap();
-            fs::write(dir.join(name).join(MARKER), json!({ "origin": origin }).to_string()).unwrap();
-        }
-        fs::create_dir_all(dir.join("someone-elses")).unwrap();
-
-        remove_renamed(&dir, "https://nibble.ink", &dir.join("nibble"));
-
-        assert!(!dir.join("nibble-nibble").exists(), "the old name for the same site goes");
-        assert!(dir.join("nibble").exists());
-        assert!(dir.join("nibble-tidewater").exists(), "another site's skill stays");
-        assert!(dir.join("someone-elses").exists(), "a skill Nibble didn't install stays");
     }
 
     #[test]
@@ -394,8 +386,8 @@ mod tests {
     fn a_project_connection_is_written_inside_the_project_and_can_be_repeated() {
         let project = scratch("project");
         for _ in 0..2 {
-            install_mcp("codex", "https://a.example", "https://a.example", None, Some(&project)).unwrap();
-            install_mcp("cursor", "https://a.example", "https://a.example", None, Some(&project)).unwrap();
+            install_mcp("codex", "https://a.example", "https://a.example", None, &project).unwrap();
+            install_mcp("cursor", "https://a.example", "https://a.example", None, &project).unwrap();
         }
         let codex: toml::Table = fs::read_to_string(project.join(".codex/config.toml")).unwrap().parse().unwrap();
         assert_eq!(codex["mcp_servers"]["nibble-a-example"]["url"].as_str(), Some("https://a.example/mcp"));
@@ -407,12 +399,12 @@ mod tests {
     #[test]
     fn disconnecting_a_site_leaves_other_sites_and_other_servers_alone() {
         let root = scratch("disconnect");
-        install_mcp("codex", "https://a.example", "https://a.example", None, Some(&root)).unwrap();
-        install_mcp("codex", "https://b.example", "https://b.example", None, Some(&root)).unwrap();
-        install_mcp("cursor", "https://a.example", "https://a.example", None, Some(&root)).unwrap();
-        install_mcp("cursor", "https://b.example", "https://b.example", None, Some(&root)).unwrap();
+        install_mcp("codex", "https://a.example", "https://a.example", None, &root).unwrap();
+        install_mcp("codex", "https://b.example", "https://b.example", None, &root).unwrap();
+        install_mcp("cursor", "https://a.example", "https://a.example", None, &root).unwrap();
+        install_mcp("cursor", "https://b.example", "https://b.example", None, &root).unwrap();
         let custom_name = Some("work-cms".to_string());
-        install_mcp("cursor", "https://a.example", "https://a.example", custom_name, Some(&root)).unwrap();
+        install_mcp("cursor", "https://a.example", "https://a.example", custom_name, &root).unwrap();
         let cursor_path = root.join(".cursor/mcp.json");
         let mut cursor: Value = serde_json::from_str(&fs::read_to_string(&cursor_path).unwrap()).unwrap();
         cursor["mcpServers"]["figma"] = json!({ "url": "https://figma.example/mcp" });
@@ -450,5 +442,60 @@ mod tests {
         assert!(!root.join(".codex/skills/nibble-a").exists());
         assert!(root.join(".claude/skills/nibble-b").exists(), "another site's skill stays");
         assert!(root.join(".claude/skills/hand-written").exists(), "a skill nibble didn't write stays");
+    }
+
+    fn site(name: &str, url: &str) -> PathBuf {
+        let dir = scratch(name);
+        fs::create_dir_all(dir.join("config")).unwrap();
+        fs::create_dir_all(dir.join("vendor/nibble")).unwrap();
+        fs::write(
+            dir.join("config/nibble.yml"),
+            format!("default: &default\n  theme: crumbs\n  url: {url}\n  locales:\n    - code: en\n      url_prefix: \"\"\n"),
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("site/themes")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn another_sites_project_is_refused_and_its_own_is_allowed() {
+        let project = site("guard", "https://a.example");
+        let inside = project.join("site/themes");
+        assert!(guard_project(&inside, "https://a.example").is_ok(), "a site's own folder, from below it too");
+        let error = guard_project(&inside, "https://b.example").unwrap_err().to_string();
+        assert!(error.contains("is the project for a.example; connect b.example from its own folder"), "{error}");
+        assert!(guard_project(&scratch("plain"), "https://b.example").is_ok(), "a folder that isn't a Nibble site takes any site");
+    }
+
+    #[test]
+    fn a_site_folder_without_an_address_is_refused() {
+        let project = site("guard-none", "");
+        fs::write(project.join("config/nibble.yml"), "default: &default\n  theme: crumbs\n").unwrap();
+        assert!(guard_project(&project, "https://a.example").unwrap_err().to_string().contains("isn't in config/nibble.yml"));
+    }
+
+    #[test]
+    fn disconnect_cleans_what_older_versions_wrote_user_wide() {
+        let home = scratch("old-home");
+        install_mcp("codex", "https://a.example", "https://a.example", None, &home).unwrap();
+        install_mcp("cursor", "https://a.example", "https://a.example", None, &home).unwrap();
+        let folder = home.join(".claude/skills/nibble-a");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join(MARKER), json!({ "origin": "https://a.example" }).to_string()).unwrap();
+
+        assert!(remove_mcp("codex", "https://a.example", "https://a.example", &home, false).unwrap().is_some());
+        assert!(remove_mcp("cursor", "https://a.example", "https://a.example", &home, false).unwrap().is_some());
+        assert_eq!(remove_skills(&home, "https://a.example"), [folder]);
+    }
+
+    #[test]
+    fn a_connection_goes_only_into_the_project_it_is_given() {
+        let (project, home) = (scratch("only-project"), scratch("untouched-home"));
+        install_mcp("codex", "https://a.example", "https://a.example", None, &project).unwrap();
+        assert!(project.join(".codex/config.toml").exists());
+        assert!(!home.join(".codex").exists());
+        let dir = skills_dir(Some("claude"), None, &project).unwrap();
+        assert_eq!(dir, project.join(".claude/skills"));
+        assert_eq!(skills_dir(Some("codex"), None, &project).unwrap(), project.join(".codex/skills"));
     }
 }

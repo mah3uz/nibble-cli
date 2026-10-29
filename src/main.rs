@@ -57,7 +57,7 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         words: Vec<String>,
     },
-    /// Connect the AI apps on this computer to a site: MCP server and skill, in one step
+    /// Connect the AI apps to a site in the current project: MCP server and skill, in one step
     Connect {
         /// The site, like example.com; signs you in if you aren't
         #[arg(value_name = "SITE")]
@@ -65,17 +65,11 @@ enum Command {
         /// Only these apps, instead of every one found
         #[arg(long, value_parser = mcp_clients(), value_delimiter = ',')]
         client: Vec<String>,
-        /// Connect for the project in this folder instead of for you
-        #[arg(long)]
-        project: bool,
     },
-    /// Remove a site's MCP server and skill from the AI apps (it doesn't sign you out)
+    /// Remove a site's MCP server and skill from this project and any older user-wide install (it doesn't sign you out)
     Disconnect {
         #[arg(value_name = "SITE")]
         address: Option<String>,
-        /// Also remove what `connect --project` put in this folder
-        #[arg(long)]
-        project: bool,
     },
     /// Add or print one MCP connection to a site, for finer control than `connect`
     Mcp {
@@ -174,8 +168,8 @@ fn mcp_clients() -> clap::builder::PossibleValuesParser {
 fn skill_clients() -> clap::builder::PossibleValuesParser {
     use clap::builder::PossibleValue;
     clap::builder::PossibleValuesParser::new([
-        PossibleValue::new("claude").help("Claude Code's skills, in ~/.claude/skills"),
-        PossibleValue::new("codex").help("Codex's skills, in ~/.codex/skills"),
+        PossibleValue::new("claude").help("Claude Code's skills, in ./.claude/skills"),
+        PossibleValue::new("codex").help("Codex's skills, in ./.codex/skills"),
         PossibleValue::new("claude-code").hide(true),
     ])
 }
@@ -218,13 +212,15 @@ fn run(cli: Cli, output: Output) -> Result<i32> {
             let mut session = session(globals.site.or(cli.site))?;
             remote::run(&mut session, remote::parse(words), output, globals.pick.as_deref().or(cli.pick.as_deref()), globals.no_wait)
         }
-        Command::Connect { address, client, project } => connect(address.or(cli.site), &client, project, output),
-        Command::Disconnect { address, project } => disconnect(address.or(cli.site), project),
+        Command::Connect { address, client } => connect(address.or(cli.site), &client, output),
+        Command::Disconnect { address } => disconnect(address.or(cli.site)),
         Command::Mcp { command } => {
             let session = session(cli.site)?;
+            let project_dir = std::env::current_dir()?;
+            agents::guard_project(&project_dir, &session.origin)?;
             match command {
                 McpCommand::Install { client, name } => {
-                    println!("{}", agents::install_mcp(&client, &session.origin, &session.site.issuer, name, None)?.line())
+                    println!("{}", agents::install_mcp(&client, &session.origin, &session.site.issuer, name, &project_dir)?.line())
                 }
                 McpCommand::Url => println!("{}/mcp", session.site.issuer),
             }
@@ -459,9 +455,13 @@ fn offer_apps(origin: &str, email: &str) {
         .and_then(|config| config.by_key(&format!("{origin}#{email}")))
         .and_then(|profile| api::Session::for_profile(profile).ok());
     let Some(mut session) = session else { return };
-    let Ok(root) = agents::home() else { return };
-    for plan in agents::plan(&clients, &[], &root) {
-        connect_client(&mut session, &plan, None);
+    let Ok(project) = std::env::current_dir() else { return };
+    if let Err(error) = agents::guard_project(&project, origin) {
+        anstream::eprintln!("{} {error:#}", paint(CHANGE, "!"));
+        return;
+    }
+    for plan in agents::plan(&clients, &[], &project) {
+        connect_client(&mut session, &plan, &project);
     }
 }
 
@@ -489,7 +489,7 @@ fn site_reference(config: &Config, address: Option<String>) -> Result<String> {
     }
 }
 
-fn connect(address: Option<String>, only: &[String], project: bool, output: Output) -> Result<i32> {
+fn connect(address: Option<String>, only: &[String], output: Output) -> Result<i32> {
     let mut session = if std::env::var("NIBBLE_TOKEN").is_ok() {
         session(address)?
     } else {
@@ -504,25 +504,22 @@ fn connect(address: Option<String>, only: &[String], project: bool, output: Outp
         }
     };
     let host = config::host(&session.origin);
-    let project_dir = if project { Some(std::env::current_dir()?) } else { None };
-    let root = match &project_dir {
-        Some(dir) => dir.clone(),
-        None => agents::home()?,
-    };
-    let plans = agents::plan(&agents::installed_clients(), only, &root);
+    let project_dir = std::env::current_dir()?;
+    agents::guard_project(&project_dir, &session.origin)?;
+    let plans = agents::plan(&agents::installed_clients(), only, &project_dir);
     if plans.is_empty() {
         anstream::eprintln!("No AI app found: nibble looks for Claude Code, Codex and Cursor. To connect another, add this MCP address:");
         println!("{}/mcp", session.site.issuer);
         return Ok(0);
     }
     for plan in &plans {
-        connect_client(&mut session, plan, project_dir.as_deref());
+        connect_client(&mut session, plan, &project_dir);
     }
     anstream::eprintln!("{}", paint(DIM, format!("`nibble disconnect {host}` undoes this.")));
     Ok(0)
 }
 
-fn disconnect(address: Option<String>, project: bool) -> Result<i32> {
+fn disconnect(address: Option<String>) -> Result<i32> {
     let config = Config::load()?;
     let reference = site_reference(&config, address)?;
     let (origin, issuer) = match config.find(&reference) {
@@ -532,10 +529,7 @@ fn disconnect(address: Option<String>, project: bool) -> Result<i32> {
             (origin.clone(), origin)
         }
     };
-    let mut roots = vec![(agents::home()?, false)];
-    if project {
-        roots.push((std::env::current_dir()?, true));
-    }
+    let roots = [(std::env::current_dir()?, true), (agents::home()?, false)];
     let mut any = false;
     for (root, is_project) in &roots {
         for client in ["claude-code", "codex", "cursor"] {
@@ -555,13 +549,13 @@ fn disconnect(address: Option<String>, project: bool) -> Result<i32> {
     }
     let host = config::host(&origin);
     if !any {
-        anstream::eprintln!("Nothing from {host} was connected{}.", if project { "" } else { " (add --project for this folder)" });
+        anstream::eprintln!("Nothing from {host} was connected here or user-wide.");
     }
     anstream::eprintln!("{}", paint(DIM, format!("This doesn't sign you out; `nibble auth logout {host}` does.")));
     Ok(0)
 }
 
-fn connect_client(session: &mut api::Session, plan: &agents::Plan, project: Option<&std::path::Path>) {
+fn connect_client(session: &mut api::Session, plan: &agents::Plan, project: &std::path::Path) {
     let label = agents::client_label(&plan.client);
     let added = match agents::install_mcp(&plan.client, &session.origin, &session.site.issuer, None, project) {
         Ok(added) => added,
@@ -583,8 +577,10 @@ fn connect_client(session: &mut api::Session, plan: &agents::Plan, project: Opti
 fn skill_command(command: SkillCommand, site: Option<String>) -> Result<()> {
     match command {
         SkillCommand::Install { client, dir } => {
-            let dir = agents::skills_dir(client.as_deref(), dir)?;
+            let project = std::env::current_dir()?;
+            let dir = agents::skills_dir(client.as_deref(), dir, &project)?;
             let mut session = session(site)?;
+            agents::guard_project(&project, &session.origin)?;
             let (folder, changed) = agents::install_skill(&mut session, &dir)?;
             style::done(format!(
                 "{} {}",
@@ -594,7 +590,7 @@ fn skill_command(command: SkillCommand, site: Option<String>) -> Result<()> {
         }
         SkillCommand::Sync => {
             let config = Config::load()?;
-            let installed = agents::installed_skills();
+            let installed = agents::installed_skills(&std::env::current_dir()?);
             if installed.is_empty() {
                 anstream::eprintln!("No site skills installed. {}", paint(DIM, "`nibble skill install --client claude` adds one."));
             }
